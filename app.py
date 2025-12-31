@@ -16,7 +16,7 @@ st.set_page_config(
 # ==============================================================================
 # 🔐 CONFIGURAÇÕES
 # ==============================================================================
-# ⚠️ INSIRA SUA CHAVE DA API ABAIXO
+# Sua chave já está configurada aqui
 API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
 BASE_URL = "https://v3.football.api-sports.io"
 ARQUIVO_CACHE = "cache_odds_v3.json"
@@ -125,7 +125,6 @@ def get_pinnacle_odd_historica(fixture_id):
     
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     try:
-        # Tenta buscar especificamente na Pinnacle (4)
         r = requests.get(f"{BASE_URL}/odds?fixture={fixture_id}&bookmaker=4", headers=headers).json()
         odd = 0
         if r['response']:
@@ -142,7 +141,6 @@ def get_pinnacle_odd_historica(fixture_id):
             salvar_cache(cache_odds)
             return odd
         else:
-            # DEBUG: Se não achou na Pinnacle, retorna None para sabermos que a API não tem esse dado
             return None
     except: return None
 
@@ -178,6 +176,9 @@ def analisar_ultimas_rodadas(league_id, nome_liga):
     df = df[['fixture.id', 'fixture.date', 'league.round', 'teams.home.name', 'teams.away.name', 'goals.home', 'goals.away']]
     df.columns = ['fixture_id', 'data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora']
     
+    # --- CORREÇÃO KEYERROR: CRIAR COLUNA JOGO ---
+    df['jogo'] = df['casa'] + " x " + df['fora']
+
     # 3. Ordenação e Filtro
     df['data'] = pd.to_datetime(df['data'])
     df = df.sort_values('data', ascending=False)
@@ -243,6 +244,7 @@ def executar_backtest_multitemporada(league_id, nome_liga, anos_para_analisar=5)
                         'temporada': ano,
                         'casa': jogo['teams']['home']['name'],
                         'fora': jogo['teams']['away']['name'],
+                        'jogo': f"{jogo['teams']['home']['name']} x {jogo['teams']['away']['name']}", # --- CORREÇÃO KEYERROR ---
                         'gols_casa': jogo['goals']['home'],
                         'gols_fora': jogo['goals']['away'],
                         'total_gols': gols,
@@ -350,7 +352,7 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 info_liga = dados_completos[liga_api]
                 bar_radar = st.progress(0)
                 
-                stake = 100 # Valor de referência para visualização
+                stake = 100 
                 
                 for i, row in df.iterrows():
                     # 1. Odd
@@ -394,7 +396,6 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 # Exibição
                 col_v = ['data', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Veredito', 'Simul. R$']
                 
-                # Renderização Segura
                 st.dataframe(df[col_v])
 
 # ------------------------------------------------------------------------------
@@ -404,7 +405,8 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
     st.title("📚 Backtest Profundo (+EV)")
     st.markdown("Simula apostas apenas quando há Valor Esperado positivo.")
     
-    if API_KEY == "5b60f94d210e08d7de93c6270c80accf":
+    # --- CORREÇÃO API KEY CHECK ---
+    if API_KEY == "SUA_API_KEY_AQUI":
         st.error("⚠️ Configure a API KEY no código.")
     
     col_a, col_b = st.columns(2)
@@ -476,7 +478,7 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             
             bar_odds.empty()
             
-            # 3. Diagnóstico de API (Para saber se o problema é a Pinnacle)
+            # 3. Diagnóstico de API
             st.caption(f"Diagnóstico de Dados: Odds recuperadas para {odds_encontradas_cnt} de {len(df_final)} jogos.")
             if odds_encontradas_cnt == 0:
                 st.error("ERRO CRÍTICO: A API não retornou odds da Pinnacle (ID 4) para nenhum jogo. Tente outra liga europeia para testar.")
@@ -504,9 +506,14 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
                 else:
                     st.warning("Nenhuma aposta +EV encontrada.")
 
-                # Tabela Detalhada (Sem formatação complexa para evitar erros)
+                # Tabela Detalhada
                 st.subheader("📋 Relatório Jogo a Jogo")
                 colunas_view = ['data', 'temporada', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Decisão', 'Lucro']
                 
                 with st.expander("Ver Tabela de Dados Completa"):
-                    st.dataframe(df_final[colunas_view])
+                    try:
+                        st.dataframe(df_final[colunas_view].style.map(
+                            lambda x: 'color: green' if x > 0 else ('color: red' if x < 0 else 'color: black'), subset=['Lucro']
+                        ))
+                    except:
+                        st.dataframe(df_final[colunas_view])
