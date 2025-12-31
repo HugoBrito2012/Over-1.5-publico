@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
@@ -8,8 +9,33 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- BANCO DE DADOS (LIGAS & MÉDIAS HISTÓRICAS) ---
-# Dicionário completo consolidado
+# --- MAPA DE DADOS AUTOMÁTICOS (EUROPA) ---
+# Conecta o Nome da Liga ao código do arquivo CSV no Football-Data.co.uk
+# Temporada 24/25
+URL_BASE = "https://www.football-data.co.uk/mmz4281/2425/"
+
+MAPA_CSV = {
+    "Inglaterra - Premier League": "E0.csv",
+    "Inglaterra - Championship (2ª)": "E1.csv",
+    "Inglaterra - League One (3ª)": "E2.csv",
+    "Inglaterra - League Two (4ª)": "E3.csv",
+    "Inglaterra - National League (5ª)": "ECI.csv",
+    "Alemanha - Bundesliga 1": "D1.csv",
+    "Alemanha - Bundesliga 2": "D2.csv",
+    "Itália - Serie A": "I1.csv",
+    "Itália - Serie B": "I2.csv",
+    "Espanha - La Liga": "SP1.csv",
+    "Espanha - La Liga 2": "SP2.csv",
+    "França - Ligue 1": "F1.csv",
+    "França - Ligue 2": "F2.csv",
+    "Holanda - Eredivisie": "N1.csv",
+    "Bélgica - Pro League": "B1.csv",
+    "Portugal - Primeira Liga": "P1.csv",
+    "Turquia - Super Lig": "T1.csv",
+    "Grécia - Super League": "G1.csv"
+}
+
+# --- BANCO DE DADOS COMPLETO (HISTÓRICO) ---
 @st.cache_data
 def carregar_dados():
     return {
@@ -109,96 +135,109 @@ dados_ligas = carregar_dados()
 
 # --- INTERFACE LATERAL ---
 st.sidebar.title("🛠️ Menu Quant")
-modo = st.sidebar.radio("Escolha a Ferramenta:", ["Calculadora de Valor (Dia a Dia)", "Monitor de Calibragem (Ajuste)"])
+modo = st.sidebar.radio("Escolha a Ferramenta:", ["Calculadora de Valor", "Monitor de Calibragem (Auto)"])
 
 # --- FUNÇÃO 1: CALCULADORA DE VALOR ---
-if modo == "Calculadora de Valor (Dia a Dia)":
+if modo == "Calculadora de Valor":
     st.title("🎯 Sniper de Valor: Over 1.5")
-    st.markdown("Use esta ferramenta para validar suas entradas baseadas na **Lei dos Grandes Números**.")
+    st.markdown("Validação via **Lei dos Grandes Números**.")
     
-    # Seleção da Liga com Busca
     liga_selecionada = st.selectbox("Selecione a Liga:", options=list(dados_ligas.keys()))
     prob_historica = dados_ligas[liga_selecionada]
     
-    # Input da Odd
     col1, col2 = st.columns(2)
     with col1:
-        odd_casa = st.number_input("Odd Oferecida pela Casa:", min_value=1.01, max_value=10.0, value=1.30, step=0.01)
+        odd_casa = st.number_input("Odd da Casa:", min_value=1.01, max_value=10.0, value=1.30, step=0.01)
     
-    # Lógica de Margem Dinâmica
+    # Lógica de Margem
     if prob_historica < 0.70:
-        margem_min = 8.0  # Ligas Under = Mais Margem
-        tipo_liga = "Under / Exótica (Risco Alto)"
+        margem_min = 8.0 
+        tipo_liga = "Under (Risco Alto)"
     elif "Tier" in liga_selecionada or "2" in liga_selecionada or "3" in liga_selecionada:
-        margem_min = 6.0  # Ligas Inferiores = Margem Média
-        tipo_liga = "Divisão Inferior (Risco Médio)"
+        margem_min = 6.0 
+        tipo_liga = "Inferior (Risco Médio)"
     else:
-        margem_min = 4.0  # Ligas Top = Margem Padrão
-        tipo_liga = "Liga Principal (Volume)"
+        margem_min = 4.0 
+        tipo_liga = "Principal (Volume)"
 
-    # Cálculos
     odd_justa = 1 / prob_historica
     odd_gatilho = (1 + (margem_min/100)) / prob_historica
     ev_percentual = ((prob_historica * odd_casa) - 1) * 100
     
-    # Exibição dos Dados
     st.divider()
     c1, c2, c3 = st.columns(3)
-    c1.metric("Probabilidade Histórica", f"{prob_historica*100:.1f}%")
-    c2.metric("Preço Justo (Fair)", f"@{odd_justa:.2f}")
-    c3.metric("Gatilho de Entrada", f"@{odd_gatilho:.2f}", delta_color="inverse")
+    c1.metric("Histórico", f"{prob_historica*100:.1f}%")
+    c2.metric("Fair Price", f"@{odd_justa:.2f}")
+    c3.metric("Gatilho", f"@{odd_gatilho:.2f}", delta_color="inverse")
     
-    st.caption(f"Perfil da Liga: {tipo_liga} | Margem Exigida: {margem_min}%")
-    
-    # Veredito Visual
-    st.subheader("Veredito do Analista:")
-    
+    st.subheader("Veredito:")
     if ev_percentual >= margem_min:
-        st.success(f"✅✅ **APOSTAR! (GREEN LIGHT)**\n\nValor Encontrado: **+{ev_percentual:.2f}%**\nA odd está acima do necessário para lucrar no longo prazo.")
+        st.success(f"✅ **APOSTAR!** (Valor: +{ev_percentual:.2f}%)")
     elif ev_percentual > 0:
-        st.warning(f"⚠️ **CUIDADO (YELLOW LIGHT)**\n\nValor Baixo: **+{ev_percentual:.2f}%**\nTem valor matemático, mas está abaixo da margem de segurança recomendada.")
+        st.warning(f"⚠️ **Riscoso** (Valor Baixo: +{ev_percentual:.2f}%)")
     else:
-        st.error(f"❌ **NÃO APOSTAR (RED LIGHT)**\n\nEV Negativo: **{ev_percentual:.2f}%**\nVocê perderá dinheiro a longo prazo com esse preço.")
+        st.error(f"❌ **NÃO APOSTAR** (EV: {ev_percentual:.2f}%)")
 
-# --- FUNÇÃO 2: MONITOR DE CALIBRAGEM ---
-elif modo == "Monitor de Calibragem (Ajuste)":
-    st.title("⚖️ Calibragem de Estratégia")
-    st.markdown("""
-    O futebol muda. Use esta aba a cada **10 rodadas** para verificar se a temporada atual 
-    está respeitando a média histórica ou se houve quebra de padrão.
-    """)
+# --- FUNÇÃO 2: MONITOR AUTOMÁTICO ---
+elif modo == "Monitor de Calibragem (Auto)":
+    st.title("⚖️ Calibragem Automática")
+    st.markdown("Monitoramento de tendência da Temporada 24/25.")
     
-    liga_calibrar = st.selectbox("Liga para Calibrar:", options=list(dados_ligas.keys()))
+    liga_calibrar = st.selectbox("Liga para Analisar:", options=list(dados_ligas.keys()))
     media_hist = dados_ligas[liga_calibrar]
     
-    st.info(f"Média Histórica (Base): **{media_hist*100:.1f}%** de Over 1.5")
+    st.info(f"Média Histórica (Base): **{media_hist*100:.1f}%**")
     
-    # Input Manual dos dados atuais (User busca no Flashscore/SoccerStats)
-    st.write("---")
-    st.write("Insira os dados da Temporada ATUAL:")
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
-        jogos_totais = st.number_input("Total de Jogos Disputados:", min_value=1, value=50)
-    with col_b:
-        jogos_over = st.number_input("Jogos com +1.5 Gols:", min_value=0, value=40)
-        
-    # Cálculo Atual
-    media_atual = jogos_over / jogos_totais
-    desvio = (media_atual - media_hist) * 100
-    
-    st.metric(label="Desempenho Atual da Temporada", value=f"{media_atual*100:.1f}%", delta=f"{desvio:.2f} p.p.")
-    
-    # Diagnóstico
-    st.subheader("Diagnóstico:")
-    
-    limite_tolerancia = 5.0 # 5 pontos percentuais de tolerância
-    
-    if abs(desvio) <= limite_tolerancia:
-        st.success("**LIGA ESTÁVEL (NORMAL)**. \nA temporada segue o padrão histórico. Mantenha a estratégia e as Odds de Gatilho originais.")
-    elif desvio > limite_tolerancia:
-        st.success(f"**LIGA MAIS OFENSIVA QUE O NORMAL (+{desvio:.1f}%)**.\nIsto é bom! Você está encontrando mais valor do que o esperado. Aproveite antes que o mercado ajuste.")
+    # Verifica se a liga tem suporte automático
+    if liga_calibrar in MAPA_CSV:
+        st.write("---")
+        if st.button("🔄 Buscar Dados da Internet (Tempo Real)"):
+            with st.spinner('Baixando dados oficiais da Inglaterra...'):
+                try:
+                    # Monta a URL
+                    arquivo = MAPA_CSV[liga_calibrar]
+                    url_completa = URL_BASE + arquivo
+                    
+                    # Lê o CSV direto da internet
+                    df = pd.read_csv(url_completa)
+                    
+                    # Filtra colunas de gols (FTHG = Full Time Home Goals, FTAG = Away)
+                    # Tratamento de erro para arquivos vazios ou início de temporada
+                    if 'FTHG' in df.columns and 'FTAG' in df.columns:
+                        df['TotalGols'] = df['FTHG'] + df['FTAG']
+                        jogos_totais = len(df)
+                        jogos_over = len(df[df['TotalGols'] >= 2]) # Over 1.5 é >= 2
+                        
+                        if jogos_totais > 0:
+                            media_atual = jogos_over / jogos_totais
+                            desvio = (media_atual - media_hist) * 100
+                            
+                            st.success("Dados baixados com sucesso!")
+                            col_a, col_b = st.columns(2)
+                            col_a.metric("Jogos Analisados", jogos_totais)
+                            col_b.metric("Média Atual (24/25)", f"{media_atual*100:.1f}%", delta=f"{desvio:.2f}%")
+                            
+                            st.subheader("Diagnóstico do Robô:")
+                            if abs(desvio) <= 5.0:
+                                st.success("✅ **ESTÁVEL:** A liga respeita o padrão histórico.")
+                            elif desvio > 5.0:
+                                st.info("🔥 **ON FIRE:** A liga está mais Over que o normal. Aproveite!")
+                            else:
+                                st.error("❄️ **GELADA:** A liga está Under. Aumente a margem de segurança!")
+                                st.write(f"Nova Odd Justa Sugerida: @{1/media_atual:.2f}")
+                        else:
+                            st.warning("A temporada parece não ter começado ou o arquivo está vazio.")
+                    else:
+                        st.error("Erro na leitura das colunas do arquivo CSV.")
+                        
+                except Exception as e:
+                    st.error(f"Erro ao conectar com a base de dados: {e}")
     else:
-        st.error(f"**LIGA EM QUEDA / UNDER ({desvio:.1f}%)**.\nATENÇÃO: A liga ficou 'truncada'. \nAção Recomendada: **Suba sua margem de segurança** ou pare de apostar nesta liga até que a média retorne.")
-        nova_odd_sugerida = 1 / media_atual
-        st.write(f"👉 *Nova Odd Justa baseada no momento atual:* **@{nova_odd_sugerida:.2f}**")
+        st.warning("⚠️ Esta liga não possui dados automáticos gratuitos disponíveis.")
+        st.write("Insira os dados manualmente abaixo (consulte Flashscore):")
+        
+        c_jogos = st.number_input("Total de Jogos:", min_value=1, value=10)
+        c_over = st.number_input("Jogos com +1.5:", min_value=0, value=8)
+        
+        m_atual = c_over / c_jogos
+        st.metric("Média Atual", f"{m_atual*100:.1f}%", delta=f"{(m_atual-media_hist)*100:.1f}%")
