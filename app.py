@@ -469,4 +469,24 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             df_final['Lucro'] = resultados_financeiros
             
             if not df_final.empty:
-                df_apostas = df_
+                df_apostas = df_final[df_final['Decisão'] == "✅ APOSTA"].copy()
+                if not df_apostas.empty:
+                    df_apostas['Saldo Acumulado'] = df_apostas['Lucro'].cumsum()
+                    lucro_total = df_apostas['Lucro'].sum()
+                    roi = (lucro_total / (len(df_apostas) * stake)) * 100
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Lucro Líquido", f"R$ {lucro_total:.2f}", delta=f"{roi:.1f}% ROI")
+                    c2.metric("Apostas Feitas", len(df_apostas))
+                    c3.metric("Total Jogos", len(df_final))
+                    st.line_chart(df_apostas.reset_index()['Saldo Acumulado'])
+                else: st.warning("Nenhuma aposta +EV encontrada.")
+
+                st.subheader("📋 Relatório Jogo a Jogo")
+                colunas_view = ['data', 'temporada', 'jogo', 'total_gols', 'Odd Média', 'Odd Gatilho', 'Decisão', 'Lucro']
+                with st.expander("Ver Tabela Completa"):
+                    try:
+                        st.dataframe(df_final[colunas_view].style.map(
+                            lambda x: 'color: green' if x > 0 else ('color: red' if x < 0 else 'color: black'), subset=['Lucro']
+                        ))
+                    except: st.dataframe(df_final[colunas_view])
