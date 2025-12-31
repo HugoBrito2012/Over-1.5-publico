@@ -8,8 +8,8 @@ from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper Pro: Stable & Adjusted",
-    page_icon="🦅",
+    page_title="Sniper Pro: Retry System",
+    page_icon="🛡️",
     layout="wide"
 )
 
@@ -18,7 +18,7 @@ st.set_page_config(
 # ==============================================================================
 API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
 BASE_URL = "https://v3.football.api-sports.io"
-ARQUIVO_CACHE = "cache_odds_avg.json"
+ARQUIVO_CACHE = "cache_odds_v7.json" # Novo cache para garantir dados limpos
 
 # IDs das Ligas
 LIGAS_API_ID = {
@@ -114,13 +114,10 @@ def carregar_dados_consolidados():
 dados_completos = carregar_dados_consolidados()
 
 # ==============================================================================
-# 🛠️ CORE: API & LÓGICA
+# 🛠️ CORE: API COM RETRY (SISTEMA ANTI-BLOQUEIO)
 # ==============================================================================
 
 def definir_margem_grupo(probabilidade):
-    """
-    Define a margem e o grupo com base na probabilidade histórica.
-    """
     if probabilidade >= 0.75:
         return 0.05, "💎 SUPER OVER (5%)"
     elif probabilidade >= 0.70:
@@ -130,33 +127,63 @@ def definir_margem_grupo(probabilidade):
     else:
         return 0.09, "🥉 UNDER (9.0%)"
 
-def get_market_average_odd(fixture_id):
+def get_market_average_odd_retry(fixture_id):
+    """
+    Busca odds com sistema de RETRY para evitar bloqueio da API.
+    Se der erro 429 (Too Many Requests), espera e tenta de novo.
+    """
     str_id = str(fixture_id)
     if str_id in cache_odds: return cache_odds[str_id]
     
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     url = f"{BASE_URL}/odds?fixture={fixture_id}"
     
-    try:
-        r = requests.get(url, headers=headers).json()
-        odds_encontradas = []
-        if r['response']:
-            bookmakers = r['response'][0]['bookmakers']
-            for bookie in bookmakers:
-                for bet in bookie['bets']:
-                    if bet['name'] in ['Goals Over/Under', 'Goals Over/Under - 1st Half']:
-                        for val in bet['values']:
-                            if val['value'] == 'Over 1.5':
-                                odds_encontradas.append(float(val['odd']))
-        
-        if len(odds_encontradas) > 0:
-            media = sum(odds_encontradas) / len(odds_encontradas)
-            cache_odds[str_id] = media
-            salvar_cache(cache_odds)
-            return media
-        else:
+    tentativas = 0
+    max_tentativas = 4
+    
+    while tentativas < max_tentativas:
+        try:
+            r = requests.get(url, headers=headers)
+            
+            # Se deu sucesso (200)
+            if r.status_code == 200:
+                data = r.json()
+                odds_encontradas = []
+                
+                if data['response']:
+                    bookmakers = data['response'][0]['bookmakers']
+                    for bookie in bookmakers:
+                        for bet in bookie['bets']:
+                            if bet['name'] in ['Goals Over/Under', 'Goals Over/Under - 1st Half']:
+                                for val in bet['values']:
+                                    if val['value'] == 'Over 1.5':
+                                        odds_encontradas.append(float(val['odd']))
+                
+                if len(odds_encontradas) > 0:
+                    media = sum(odds_encontradas) / len(odds_encontradas)
+                    cache_odds[str_id] = media
+                    salvar_cache(cache_odds)
+                    return media
+                else:
+                    return None # Jogo sem odds (raro, mas acontece)
+            
+            # Se a API bloqueou (429)
+            elif r.status_code == 429:
+                st.toast(f"⏳ API cheia. Aguardando... (Tentativa {tentativas+1})", icon="✋")
+                time.sleep(1.5) # Espera 1.5s
+                tentativas += 1
+            
+            # Outros erros
+            else:
+                return None
+
+        except:
             return None
-    except: return None
+        
+        # Delay padrão entre tentativas
+        time.sleep(0.2)
+        
+    return None
 
 def get_temporada_atual(league_id):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
@@ -285,7 +312,7 @@ modo = st.sidebar.radio("Modo:", [
 ])
 
 # ------------------------------------------------------------------------------
-# MODO 1: CALCULADORA MANUAL
+# MODO 1: CALCULADORA MANUAL (MARGENS AJUSTADAS)
 # ------------------------------------------------------------------------------
 if modo == "1. Calculadora Manual":
     st.title("🧪 Calculadora Quant (Histórica)")
@@ -303,11 +330,10 @@ if modo == "1. Calculadora Manual":
     
     prob = info_liga["super"] if tem_super else info_liga["base"]
     
-    # MARGEM AUTOMÁTICA
     margem, grupo_nome = definir_margem_grupo(prob)
     margem_percent = margem * 100
     
-    st.markdown(f"**Grupo:** {grupo_nome} | **Margem Mínima:** {margem_percent:.1f}%")
+    st.markdown(f"**Grupo:** {grupo_nome} | **Margem Aplicada:** {margem_percent:.1f}%")
 
     col1, col2 = st.columns(2)
     with col1: odd = st.number_input("Odd Casa:", 1.01, 10.0, 1.30)
@@ -351,10 +377,9 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 stake = 100 
                 
                 for i, row in df.iterrows():
-                    # Delay anti-bloqueio (Rate Limit)
-                    time.sleep(0.2)
+                    # USO DA NOVA FUNÇÃO BLINDADA
+                    odd = get_market_average_odd_retry(row['fixture_id'])
                     
-                    odd = get_market_average_odd(row['fixture_id'])
                     prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
                     margem, _ = definir_margem_grupo(prob_ref)
                     gatilho = (1 + margem) / prob_ref
@@ -393,6 +418,8 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
 elif modo == "3. Deep Backtest (5 Temporadas)":
     st.title("📚 Backtest Profundo (+EV)")
     
+    if API_KEY == "SUA_API_KEY_AQUI": st.error("⚠️ Configure a API KEY no código.")
+    
     col_a, col_b = st.columns(2)
     with col_a: liga_api = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
     with col_b:
@@ -407,7 +434,7 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
         if erro: st.error(erro)
         else:
             df_final = df.head(limite_jogos).copy()
-            st.info(f"Jogos mapeados: {len(df_final)}. Buscando Odds médias (Isso pode demorar, respeitando limite da API)...")
+            st.info(f"Jogos mapeados: {len(df_final)}. Calculando Odds Médias (Com sistema Anti-Bloqueio)...")
             
             resultados_financeiros = []
             odds_fechamento = []
@@ -419,10 +446,9 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             odds_encontradas_cnt = 0
             
             for i, row in df_final.iterrows():
-                # --- DELAY VITAL PARA NÃO TRAVAR API ---
-                time.sleep(0.2) 
+                # USO DA NOVA FUNÇÃO BLINDADA
+                odd_avg = get_market_average_odd_retry(row['fixture_id'])
                 
-                odd_avg = get_market_average_odd(row['fixture_id'])
                 if odd_avg: odds_encontradas_cnt += 1
                 
                 prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
