@@ -8,8 +8,8 @@ from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper Pro: Deep Backtest",
-    page_icon="📚",
+    page_title="Sniper Pro: Full Suite",
+    page_icon="🦅",
     layout="wide"
 )
 
@@ -40,7 +40,7 @@ LIGAS_API_ID = {
 }
 
 # ==============================================================================
-# 💾 SISTEMA DE CACHE (Vital para 5 temporadas)
+# 💾 SISTEMA DE CACHE
 # ==============================================================================
 def carregar_cache():
     if os.path.exists(ARQUIVO_CACHE):
@@ -114,7 +114,7 @@ def carregar_dados_consolidados():
 dados_completos = carregar_dados_consolidados()
 
 # ==============================================================================
-# 🛠️ CORE: API, ODDS & BACKTEST
+# 🛠️ CORE: FUNÇÕES DE API
 # ==============================================================================
 
 def get_pinnacle_odd_historica(fixture_id):
@@ -140,24 +140,91 @@ def get_pinnacle_odd_historica(fixture_id):
         return odd if odd > 0 else None
     except: return None
 
-def executar_backtest_multitemporada(league_id, nome_liga, anos_para_analisar=5):
-    """
-    Varre as últimas X temporadas, busca jogos e odds, e prepara o dataframe.
-    """
+def get_temporada_atual(league_id):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
-    
-    # 1. Descobrir temporada atual
     try:
         r = requests.get(f"{BASE_URL}/leagues", headers=headers, params={'id': league_id, 'current': 'true'}).json()
-        ano_atual = r['response'][0]['seasons'][0]['year']
-    except:
-        ano_atual = 2025 # Fallback
+        if r['response']: return r['response'][0]['seasons'][0]['year']
+        return 2024 # Fallback
+    except: return 2024
+
+def analisar_ultimas_rodadas(league_id, nome_liga):
+    """ Busca a temporada atual e analisa as últimas 10 rodadas """
+    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     
-    # 2. Loop de Temporadas
-    anos = [ano_atual - i for i in range(anos_para_analisar)] # Ex: [2025, 2024, 2023...]
+    # 1. Identificar Temporada
+    ano_ativo = get_temporada_atual(league_id)
+    
+    usando_temporada_anterior = False
+    
+    # 2. Baixar jogos
+    params = {'league': league_id, 'season': ano_ativo, 'status': 'FT'}
+    response = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
+    
+    # Se vazio, tenta anterior
+    if not response['response']:
+        ano_ativo -= 1
+        usando_temporada_anterior = True
+        params['season'] = ano_ativo
+        response = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
+        if not response['response']: return None, None, "Sem dados."
+
+    df = pd.json_normalize(response['response'])
+    df = df[['fixture.id', 'fixture.date', 'league.round', 'teams.home.name', 'teams.away.name', 'goals.home', 'goals.away']]
+    df.columns = ['fixture_id', 'data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora']
+    
+    # 3. Ordenação e Filtro (Top 10 Rodadas)
+    df['data'] = pd.to_datetime(df['data'])
+    df = df.sort_values('data', ascending=False)
+    
+    rodadas_presentes = df['rodada'].unique()
+    
+    if usando_temporada_anterior:
+        rodadas_selecionadas = rodadas_presentes
+    else:
+        rodadas_selecionadas = rodadas_presentes[:10]
+    
+    df_recorte = df[df['rodada'].isin(rodadas_selecionadas)].copy()
+    
+    # 4. Dados Básicos
+    df_recorte['total_gols'] = df_recorte['gols_casa'] + df_recorte['gols_fora']
+    df_recorte['over_15'] = df_recorte['total_gols'] >= 2
+    
+    # Cluster
+    info_liga = dados_completos.get(nome_liga, {"times": []})
+    super_times = info_liga["times"]
+    
+    def is_super_game(row):
+        for time in super_times:
+            if time in row['casa'] or time in row['fora']: return True
+        return False
+        
+    df_recorte['eh_super'] = df_recorte.apply(is_super_game, axis=1)
+    
+    media_base = df_recorte[df_recorte['eh_super'] == False]['over_15'].mean()
+    media_super = df_recorte[df_recorte['eh_super'] == True]['over_15'].mean()
+    if pd.isna(media_base): media_base = 0
+    if pd.isna(media_super): media_super = 0
+    
+    stats = {
+        "status": "Anterior (Completa)" if usando_temporada_anterior else "Atual (Recente)",
+        "ano": str(ano_ativo),
+        "rodadas": len(rodadas_selecionadas),
+        "total_jogos": len(df_recorte),
+        "media_base": media_base,
+        "media_super": media_super,
+        "super_times": super_times
+    }
+    
+    return stats, df_recorte, None
+
+def executar_backtest_multitemporada(league_id, nome_liga, anos_para_analisar=5):
+    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
+    
+    ano_atual = get_temporada_atual(league_id)
+    anos = [ano_atual - i for i in range(anos_para_analisar)]
     
     todos_jogos = []
-    
     status_msg = st.empty()
     bar_geral = st.progress(0)
     
@@ -183,13 +250,15 @@ def executar_backtest_multitemporada(league_id, nome_liga, anos_para_analisar=5)
         except: pass
         bar_geral.progress((i + 1) / len(anos))
     
+    status_msg.empty()
+    bar_geral.empty()
+    
     if not todos_jogos: return None, "Nenhum jogo encontrado."
     
     df = pd.DataFrame(todos_jogos)
     df['data'] = pd.to_datetime(df['data'])
     df = df.sort_values('data', ascending=False)
     
-    # 3. Identificar Clusters (Super Times)
     info_liga = dados_completos.get(nome_liga, {"times": []})
     super_times = info_liga["times"]
     
@@ -206,11 +275,18 @@ def executar_backtest_multitemporada(league_id, nome_liga, anos_para_analisar=5)
 # 📱 INTERFACE
 # ==============================================================================
 st.sidebar.title("🧰 Menu Sniper")
-modo = st.sidebar.radio("Modo:", ["1. Calculadora Manual", "2. Deep Backtest (+EV)"])
+modo = st.sidebar.radio("Modo:", [
+    "1. Calculadora Manual", 
+    "2. Radar de Tendência (Temporada Atual)", 
+    "3. Deep Backtest (5 Temporadas)"
+])
 
+# ------------------------------------------------------------------------------
+# MODO 1: CALCULADORA MANUAL
+# ------------------------------------------------------------------------------
 if modo == "1. Calculadora Manual":
     st.title("🧪 Calculadora Quant (Histórica)")
-    # (Mantendo o código da calculadora manual igual ao anterior para referência rápida)
+    
     lista_ligas = sorted(list(dados_completos.keys()))
     liga_sel = st.selectbox("Selecione a Liga:", lista_ligas)
     info_liga = dados_completos[liga_sel]
@@ -245,125 +321,118 @@ if modo == "1. Calculadora Manual":
     if ev >= margem: st.success(f"✅ APOSTAR! (+{ev:.1f}%)")
     else: st.error("❌ NÃO APOSTAR")
 
-elif modo == "2. Deep Backtest (+EV)":
-    st.title("📚 Backtest Profundo (5 Temporadas)")
-    st.markdown("""
-    Este módulo analisa até **5 anos** de jogos.
-    Ele verifica a odd de fechamento e **simula a aposta APENAS se houver Valor Esperado (+EV)** baseado na sua regra de margem.
-    """)
+# ------------------------------------------------------------------------------
+# MODO 2: RADAR DE TENDÊNCIA (Restaurado e Melhorado)
+# ------------------------------------------------------------------------------
+elif modo == "2. Radar de Tendência (Temporada Atual)":
+    st.title("📡 Radar de Tendência + Odds")
+    st.caption("Analisa a temporada atual (ou última encerrada) e verifica se as odds ofereceram valor.")
+
+    liga_api = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
     
-    if API_KEY == "SUA_API_KEY_AQUI":
-        st.error("⚠️ Configure a API KEY no código.")
+    if st.button("🔄 Analisar Tendência"):
+        id_liga = LIGAS_API_ID[liga_api]
+        with st.spinner("Buscando jogos recentes e odds..."):
+            stats, df, erro = analisar_ultimas_rodadas(id_liga, liga_api)
+            
+            if erro:
+                st.error(erro)
+            else:
+                st.success(f"Dados: {stats['status']} ({stats['ano']}) | {stats['total_jogos']} jogos analisados.")
+                
+                # --- BUSCA ODDS PARA A LISTA ---
+                odds_lista = []
+                gatilho_lista = []
+                decisao_lista = []
+                
+                info_liga = dados_completos[liga_api]
+                bar_radar = st.progress(0)
+                
+                for i, row in df.iterrows():
+                    # 1. Odd
+                    odd = get_pinnacle_odd_historica(row['fixture_id'])
+                    
+                    # 2. Gatilho
+                    prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
+                    
+                    # Regra Margem
+                    if prob_ref < 0.70: margem = 0.09
+                    elif "2" in liga_api or "3" in liga_api: margem = 0.065
+                    else: margem = 0.05
+                    
+                    gatilho = (1 + margem) / prob_ref
+                    
+                    # 3. Decisão
+                    res = "Sem Odd"
+                    if odd and odd > 0:
+                        if odd >= gatilho: res = "✅ APOSTA"
+                        else: res = "⛔ Baixo Valor"
+                    
+                    odds_lista.append(odd if odd else 0)
+                    gatilho_lista.append(gatilho)
+                    decisao_lista.append(res)
+                    
+                    bar_radar.progress((list(df.index).index(i) + 1) / len(df))
+                
+                bar_radar.empty()
+                df['Odd Pinnacle'] = odds_lista
+                df['Odd Gatilho'] = gatilho_lista
+                df['Veredito'] = decisao_lista
+                
+                # Exibição
+                col_v = ['data', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Veredito']
+                st.dataframe(df[col_v].style.map(
+                    lambda x: 'color: green; font-weight: bold' if x == "✅ APOSTA" else ('color: red' if x == "⛔ Baixo Valor" else 'color: gray'), subset=['Veredito']
+                ))
+
+# ------------------------------------------------------------------------------
+# MODO 3: BACKTEST PROFUNDO (5 Temporadas)
+# ------------------------------------------------------------------------------
+elif modo == "3. Deep Backtest (5 Temporadas)":
+    st.title("📚 Backtest Profundo (+EV)")
+    st.markdown("Simula apostas apenas quando há Valor Esperado positivo.")
     
     col_a, col_b = st.columns(2)
     with col_a:
         liga_api = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
     with col_b:
         stake = st.number_input("Stake Fixa (R$):", value=100)
-        limite_jogos = st.slider("Limite de Jogos para Análise (Economia de API):", 50, 2000, 200)
+        limite_jogos = st.slider("Limite de Jogos:", 50, 2000, 200)
 
-    if st.button("🚀 Iniciar Backtest +EV"):
+    if st.button("🚀 Iniciar Backtest"):
         id_liga = LIGAS_API_ID[liga_api]
         
-        # 1. Baixar Jogos (Batch)
+        # 1. Baixar Jogos
         df, erro = executar_backtest_multitemporada(id_liga, liga_api)
         
         if erro:
             st.error(erro)
         else:
-            # Limitar a quantidade para não explodir API se o usuário quiser
             df_final = df.head(limite_jogos).copy()
-            st.info(f"Jogos mapeados: {len(df_final)}. Buscando Odds de Fechamento (Pinnacle)...")
+            st.info(f"Jogos mapeados: {len(df_final)}. Buscando Odds...")
             
-            # 2. Buscar Odds e Aplicar Lógica +EV
+            # 2. Buscar Odds e Calcular
             resultados_financeiros = []
             odds_fechamento = []
             odds_gatilho_lista = []
-            decisao_lista = [] # Apostou ou Não
+            decisao_lista = []
             
-            # Dados da Liga para cálculo do Gatilho
             info_liga = dados_completos[liga_api]
-            
             bar_odds = st.progress(0)
             
             for i, row in df_final.iterrows():
-                # A. Buscar Odd (Cache/API)
                 odd_pin = get_pinnacle_odd_historica(row['fixture_id'])
                 
-                # B. Calcular Odd Gatilho para ESSE jogo específico
                 prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
                 
-                # Regra de Margem
                 if prob_ref < 0.70: margem = 0.09
-                elif "2" in liga_api or "3" in liga_api or "Tier" in liga_api: margem = 0.065
+                elif "2" in liga_api or "3" in liga_api: margem = 0.065
                 else: margem = 0.05
                 
                 odd_gatilho = (1 + margem) / prob_ref
                 
-                # C. Decisão de Aposta (+EV)
                 lucro = 0
-                apostou = "Ignorada (Sem Valor)"
+                apostou = "Ignorada"
                 
                 if odd_pin and odd_pin > 0:
-                    if odd_pin >= odd_gatilho:
-                        apostou = "✅ APOSTA (+EV)"
-                        if row['over_15']:
-                            lucro = (stake * odd_pin) - stake
-                        else:
-                            lucro = -stake
-                    else:
-                        apostou = "⛔ Ignorada (Odd Baixa)"
-                else:
-                    apostou = "⚠️ Sem Odd"
-                    odd_pin = 0
-                
-                odds_fechamento.append(odd_pin)
-                odds_gatilho_lista.append(odd_gatilho)
-                resultados_financeiros.append(lucro)
-                decisao_lista.append(apostou)
-                
-                # Barra de progresso
-                idx = list(df_final.index).index(i)
-                bar_odds.progress((idx + 1) / len(df_final))
-            
-            bar_odds.empty()
-            
-            # Montar DataFrame Final
-            df_final['Odd Pinnacle'] = odds_fechamento
-            df_final['Odd Gatilho'] = odds_gatilho_lista
-            df_final['Decisão'] = decisao_lista
-            df_final['Lucro'] = resultados_financeiros
-            
-            # Filtrar apenas as apostas feitas para métricas
-            df_apostas = df_final[df_final['Decisão'] == "✅ APOSTA (+EV)"].copy()
-            df_apostas['Saldo Acumulado'] = df_apostas['Lucro'].cumsum()
-            
-            # --- DASHBOARD DE RESULTADOS ---
-            st.write("---")
-            if len(df_apostas) > 0:
-                lucro_total = df_apostas['Lucro'].sum()
-                roi = (lucro_total / (len(df_apostas) * stake)) * 100
-                wr = (len(df_apostas[df_apostas['Lucro'] > 0]) / len(df_apostas)) * 100
-                
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Lucro Líquido", f"R$ {lucro_total:.2f}", delta=f"{roi:.1f}% ROI")
-                c2.metric("Jogos Analisados", len(df_final))
-                c3.metric("Apostas Feitas (+EV)", len(df_apostas))
-                c4.metric("Win Rate", f"{wr:.1f}%")
-                
-                st.subheader("📈 Curva de Crescimento da Banca (Apenas Apostas +EV)")
-                st.line_chart(df_apostas.reset_index()['Saldo Acumulado'])
-                
-                if lucro_total > 0:
-                    st.success("✅ **SISTEMA VALIDADO:** Esta liga é lucrativa seguindo seus parâmetros.")
-                else:
-                    st.error("❌ **SISTEMA EM PREJUÍZO:** Mesmo filtrando valor, a liga não performou.")
-            else:
-                st.warning("Nenhuma aposta encontrada com valor (+EV) no período analisado. O mercado está muito ajustado ou suas margens são muito altas.")
-
-            # Tabela Detalhada
-            st.subheader("📋 Relatório Jogo a Jogo")
-            colunas_view = ['data', 'temporada', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Decisão', 'Lucro']
-            st.dataframe(df_final[colunas_view].style.applymap(
-                lambda x: 'color: green' if x > 0 else ('color: red' if x < 0 else 'color: black'), subset=['Lucro']
-            ))
+                    if odd_pin >= odd_gat
