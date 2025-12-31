@@ -8,8 +8,8 @@ from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper Pro: Market Average",
-    page_icon="🦅",
+    page_title="Sniper Pro: Margens Ajustadas",
+    page_icon="🎯",
     layout="wide"
 )
 
@@ -18,7 +18,7 @@ st.set_page_config(
 # ==============================================================================
 API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
 BASE_URL = "https://v3.football.api-sports.io"
-ARQUIVO_CACHE = "cache_odds_avg.json" # Mudamos o nome para não misturar com o cache antigo
+ARQUIVO_CACHE = "cache_odds_avg.json"
 
 # IDs das Ligas
 LIGAS_API_ID = {
@@ -114,19 +114,32 @@ def carregar_dados_consolidados():
 dados_completos = carregar_dados_consolidados()
 
 # ==============================================================================
-# 🛠️ CORE: API (ODDS MÉDIA DO MERCADO)
+# 🛠️ CORE: API & LÓGICA DE MARGEM
 # ==============================================================================
 
-def get_market_average_odd(fixture_id):
-    """ 
-    Busca a MÉDIA das odds de Over 1.5 de TODOS os bookmakers disponíveis.
+def definir_margem_grupo(probabilidade):
     """
+    Define a margem e o grupo com base na probabilidade histórica.
+    1. Super Over (>75%): 5.0%
+    2. Over (70-74%): 6.5% (Ex: Brasil A)
+    3. Intermediária (66-69%): 7.5%
+    4. Under (<66%): 9.0%
+    """
+    if probabilidade >= 0.75:
+        return 0.05, "💎 SUPER OVER (5%)"
+    elif probabilidade >= 0.70:
+        return 0.065, "🥇 OVER (6.5%)"
+    elif probabilidade >= 0.66:
+        return 0.075, "🥈 INTERMEDIÁRIA (7.5%)"
+    else:
+        return 0.09, "🥉 UNDER (9.0%)"
+
+def get_market_average_odd(fixture_id):
+    """ Busca a MÉDIA das odds de Over 1.5 de TODOS os bookmakers. """
     str_id = str(fixture_id)
     if str_id in cache_odds: return cache_odds[str_id]
     
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
-    
-    # Removemos o filtro '&bookmaker=4' para pegar todos
     url = f"{BASE_URL}/odds?fixture={fixture_id}"
     
     try:
@@ -134,7 +147,6 @@ def get_market_average_odd(fixture_id):
         odds_encontradas = []
         
         if r['response']:
-            # Itera sobre todos os bookmakers (Bet365, Pinnacle, 1xBet, etc)
             bookmakers = r['response'][0]['bookmakers']
             for bookie in bookmakers:
                 for bet in bookie['bets']:
@@ -162,7 +174,6 @@ def get_temporada_atual(league_id):
 
 def analisar_ultimas_rodadas(league_id, nome_liga):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
-    
     ano_ativo = get_temporada_atual(league_id)
     usando_temporada_anterior = False
     
@@ -181,7 +192,6 @@ def analisar_ultimas_rodadas(league_id, nome_liga):
     df.columns = ['fixture_id', 'data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora']
     
     df['jogo'] = df['casa'] + " x " + df['fora']
-
     df['data'] = pd.to_datetime(df['data'])
     df = df.sort_values('data', ascending=False)
     
@@ -189,7 +199,6 @@ def analisar_ultimas_rodadas(league_id, nome_liga):
     rodadas_selecionadas = rodadas_presentes if usando_temporada_anterior else rodadas_presentes[:10]
     
     df_recorte = df[df['rodada'].isin(rodadas_selecionadas)].copy()
-    
     df_recorte['total_gols'] = df_recorte['gols_casa'] + df_recorte['gols_fora']
     df_recorte['over_15'] = df_recorte['total_gols'] >= 2
     
@@ -217,12 +226,10 @@ def analisar_ultimas_rodadas(league_id, nome_liga):
         "media_super": media_super,
         "super_times": super_times
     }
-    
     return stats, df_recorte, None
 
 def executar_backtest_multitemporada(league_id, nome_liga, anos_para_analisar=5):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
-    
     ano_atual = get_temporada_atual(league_id)
     anos = [ano_atual - i for i in range(anos_para_analisar)]
     
@@ -271,7 +278,6 @@ def executar_backtest_multitemporada(league_id, nome_liga, anos_para_analisar=5)
         return False
     
     df['eh_super'] = df.apply(check_super, axis=1)
-    
     return df, None
 
 # ==============================================================================
@@ -285,7 +291,7 @@ modo = st.sidebar.radio("Modo:", [
 ])
 
 # ------------------------------------------------------------------------------
-# MODO 1: CALCULADORA MANUAL (ATUALIZADA)
+# MODO 1: CALCULADORA MANUAL (MARGENS AJUSTADAS)
 # ------------------------------------------------------------------------------
 if modo == "1. Calculadora Manual":
     st.title("🧪 Calculadora Quant (Histórica)")
@@ -294,17 +300,6 @@ if modo == "1. Calculadora Manual":
     liga_sel = st.selectbox("Selecione a Liga:", lista_ligas)
     info_liga = dados_completos[liga_sel]
     
-    # 1. Definição Automática da Margem
-    if info_liga['base'] < 0.70: 
-        margem = 9.0
-        cluster_nome = "BRONZE / UNDER"
-    elif "2" in liga_sel or "3" in liga_sel or "Tier" in liga_sel: 
-        margem = 6.5
-        cluster_nome = "TIER INFERIOR (Volátil)"
-    else: 
-        margem = 5.0
-        cluster_nome = "OURO / PRINCIPAL"
-
     tem_super = False
     if len(info_liga["times"]) > 0:
         st.info(f"⚡ **Super Times:** {', '.join(info_liga['times'])}")
@@ -314,8 +309,11 @@ if modo == "1. Calculadora Manual":
     
     prob = info_liga["super"] if tem_super else info_liga["base"]
     
-    # Display Visual
-    st.markdown(f"**Grupo:** {cluster_nome} | **Margem Mínima:** {margem}%")
+    # --- NOVA LÓGICA DE MARGEM AUTOMÁTICA ---
+    margem, grupo_nome = definir_margem_grupo(prob)
+    margem_percent = margem * 100
+    
+    st.markdown(f"**Grupo:** {grupo_nome} | **Margem Aplicada:** {margem_percent:.1f}%")
 
     if tem_super: st.success(f"Média Turbo: **{prob*100:.1f}%**")
     else: st.markdown(f"Média Base: **{prob*100:.1f}%**")
@@ -324,7 +322,7 @@ if modo == "1. Calculadora Manual":
     with col1: odd = st.number_input("Odd Casa:", 1.01, 10.0, 1.30)
 
     ev = ((prob * odd) - 1) * 100
-    gatilho = (1 + (margem/100)) / prob
+    gatilho = (1 + margem) / prob
     
     st.divider()
     c1, c2, c3 = st.columns(3)
@@ -341,8 +339,6 @@ if modo == "1. Calculadora Manual":
 # ------------------------------------------------------------------------------
 elif modo == "2. Radar de Tendência (Temporada Atual)":
     st.title("📡 Radar de Tendência + Odds Média")
-    st.caption("Analisa a temporada atual e verifica odds médias do mercado.")
-
     liga_api = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
     
     if st.button("🔄 Analisar Tendência"):
@@ -355,7 +351,6 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
             else:
                 st.success(f"Dados: {stats['status']} ({stats['ano']}) | {stats['total_jogos']} jogos analisados.")
                 
-                # --- BUSCA ODDS PARA A LISTA ---
                 odds_lista = []
                 gatilho_lista = []
                 decisao_lista = []
@@ -363,39 +358,30 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 
                 info_liga = dados_completos[liga_api]
                 bar_radar = st.progress(0)
-                
                 stake = 100 
                 
                 for i, row in df.iterrows():
-                    # 1. Odd (MÉDIA DE TODOS OS BOOKMAKERS)
                     odd = get_market_average_odd(row['fixture_id'])
                     
-                    # 2. Gatilho
                     prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
                     
-                    if prob_ref < 0.70: margem = 0.09
-                    elif "2" in liga_api or "3" in liga_api: margem = 0.065
-                    else: margem = 0.05
-                    
+                    # --- MARGEM CORRETA ---
+                    margem, _ = definir_margem_grupo(prob_ref)
                     gatilho = (1 + margem) / prob_ref
                     
-                    # 3. Decisão
                     res = "Sem Odd"
                     lucro = 0
-                    
                     if odd and odd > 0:
                         if odd >= gatilho: 
                             res = "✅ APOSTA"
                             if row['over_15']: lucro = (stake * odd) - stake
                             else: lucro = -stake
-                        else: 
-                            res = "⛔ Baixo Valor"
+                        else: res = "⛔ Baixo Valor"
                     
                     odds_lista.append(odd if odd else 0)
                     gatilho_lista.append(gatilho)
                     decisao_lista.append(res)
                     lucro_lista.append(lucro)
-                    
                     bar_radar.progress((list(df.index).index(i) + 1) / len(df))
                 
                 bar_radar.empty()
@@ -404,68 +390,53 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 df['Veredito'] = decisao_lista
                 df['Simul. R$'] = lucro_lista
                 
-                # Exibição
                 col_v = ['data', 'jogo', 'total_gols', 'Odd Média', 'Odd Gatilho', 'Veredito', 'Simul. R$']
-                
                 try:
                     st.dataframe(df[col_v].style.map(
                         lambda x: 'color: green; font-weight: bold' if x == "✅ APOSTA" else ('color: red' if x == "⛔ Baixo Valor" else 'color: gray'), subset=['Veredito']
                     ))
-                except:
-                    st.dataframe(df[col_v])
+                except: st.dataframe(df[col_v])
 
 # ------------------------------------------------------------------------------
 # MODO 3: BACKTEST PROFUNDO
 # ------------------------------------------------------------------------------
 elif modo == "3. Deep Backtest (5 Temporadas)":
     st.title("📚 Backtest Profundo (+EV)")
-    st.markdown("Simula apostas usando a **Média do Mercado**.")
     
-    if API_KEY == "SUA_API_KEY_AQUI":
-        st.error("⚠️ Configure a API KEY no código.")
+    if API_KEY == "SUA_API_KEY_AQUI": st.error("⚠️ Configure a API KEY no código.")
     
     col_a, col_b = st.columns(2)
-    with col_a:
-        liga_api = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
+    with col_a: liga_api = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
     with col_b:
         stake = st.number_input("Stake Fixa (R$):", value=100)
         limite_jogos = st.slider("Limite de Jogos:", 50, 2000, 200)
 
     if st.button("🚀 Iniciar Backtest"):
         id_liga = LIGAS_API_ID[liga_api]
-        
-        # 1. Baixar Jogos
         with st.spinner("Baixando histórico massivo de jogos..."):
             df, erro = executar_backtest_multitemporada(id_liga, liga_api)
         
-        if erro:
-            st.error(erro)
+        if erro: st.error(erro)
         else:
             df_final = df.head(limite_jogos).copy()
-            st.info(f"Jogos mapeados: {len(df_final)}. Calculando Média de Odds...")
+            st.info(f"Jogos mapeados: {len(df_final)}. Calculando Odds Média...")
             
-            # 2. Buscar Odds e Calcular
             resultados_financeiros = []
             odds_fechamento = []
             odds_gatilho_lista = []
             decisao_lista = []
-            
             info_liga = dados_completos[liga_api]
             bar_odds = st.progress(0)
-            
             odds_encontradas_cnt = 0
             
             for i, row in df_final.iterrows():
-                # --- MUDANÇA: PEGA MÉDIA DO MERCADO AO INVÉS DE SÓ PINNACLE ---
                 odd_avg = get_market_average_odd(row['fixture_id'])
                 if odd_avg: odds_encontradas_cnt += 1
                 
                 prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
                 
-                if prob_ref < 0.70: margem = 0.09
-                elif "2" in liga_api or "3" in liga_api: margem = 0.065
-                else: margem = 0.05
-                
+                # --- MARGEM CORRETA ---
+                margem, _ = definir_margem_grupo(prob_ref)
                 odd_gatilho = (1 + margem) / prob_ref
                 
                 lucro = 0
@@ -474,12 +445,9 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
                 if odd_avg and odd_avg > 0:
                     if odd_avg >= odd_gatilho:
                         apostou = "✅ APOSTA"
-                        if row['over_15']:
-                            lucro = (stake * odd_avg) - stake
-                        else:
-                            lucro = -stake
-                    else:
-                        apostou = "⛔ Baixa"
+                        if row['over_15']: lucro = (stake * odd_avg) - stake
+                        else: lucro = -stake
+                    else: apostou = "⛔ Baixa"
                 else:
                     apostou = "⚠️ N/A"
                     odd_avg = 0
@@ -488,47 +456,17 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
                 odds_gatilho_lista.append(odd_gatilho)
                 resultados_financeiros.append(lucro)
                 decisao_lista.append(apostou)
-                
                 bar_odds.progress((list(df_final.index).index(i) + 1) / len(df_final))
             
             bar_odds.empty()
             
-            # 3. Diagnóstico
             st.caption(f"Diagnóstico: Odds médias recuperadas para {odds_encontradas_cnt} de {len(df_final)} jogos.")
-            if odds_encontradas_cnt == 0:
-                st.error("ERRO CRÍTICO: Não foi possível obter odds de nenhum bookmaker.")
+            if odds_encontradas_cnt == 0: st.error("ERRO CRÍTICO: Não foi possível obter odds de nenhum bookmaker.")
             
             df_final['Odd Média'] = odds_fechamento
             df_final['Odd Gatilho'] = odds_gatilho_lista
             df_final['Decisão'] = decisao_lista
             df_final['Lucro'] = resultados_financeiros
             
-            # 4. Exibir Resultados
             if not df_final.empty:
-                df_apostas = df_final[df_final['Decisão'] == "✅ APOSTA"].copy()
-                
-                if not df_apostas.empty:
-                    df_apostas['Saldo Acumulado'] = df_apostas['Lucro'].cumsum()
-                    lucro_total = df_apostas['Lucro'].sum()
-                    roi = (lucro_total / (len(df_apostas) * stake)) * 100
-                    
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Lucro Líquido", f"R$ {lucro_total:.2f}", delta=f"{roi:.1f}% ROI")
-                    c2.metric("Apostas Feitas", len(df_apostas))
-                    c3.metric("Total Jogos Analisados", len(df_final))
-                    
-                    st.line_chart(df_apostas.reset_index()['Saldo Acumulado'])
-                else:
-                    st.warning("Nenhuma aposta +EV encontrada.")
-
-                # Tabela Detalhada
-                st.subheader("📋 Relatório Jogo a Jogo")
-                colunas_view = ['data', 'temporada', 'jogo', 'total_gols', 'Odd Média', 'Odd Gatilho', 'Decisão', 'Lucro']
-                
-                with st.expander("Ver Tabela de Dados Completa"):
-                    try:
-                        st.dataframe(df_final[colunas_view].style.map(
-                            lambda x: 'color: green' if x > 0 else ('color: red' if x < 0 else 'color: black'), subset=['Lucro']
-                        ))
-                    except:
-                        st.dataframe(df_final[colunas_view])
+                df_apostas = df_
