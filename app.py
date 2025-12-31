@@ -404,7 +404,7 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
     st.title("📚 Backtest Profundo (+EV)")
     st.markdown("Simula apostas apenas quando há Valor Esperado positivo.")
     
-    if API_KEY == "5b60f94d210e08d7de93c6270c80accf":
+    if API_KEY = "5b60f94d210e08d7de93c6270c80accf":
         st.error("⚠️ Configure a API KEY no código.")
     
     col_a, col_b = st.columns(2)
