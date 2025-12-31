@@ -1,48 +1,68 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import requests
+import time
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper de Valor (Over 1.5)",
-    page_icon="⚽",
+    page_title="Sniper Pro: Apostas Quant",
+    page_icon="🎯",
     layout="centered"
 )
 
-# --- MAPA DE DADOS AUTOMÁTICOS (EUROPA) ---
-# Conecta o Nome da Liga ao código do arquivo CSV no Football-Data.co.uk
-# Temporada 24/25
-URL_BASE = "https://www.football-data.co.uk/mmz4281/2425/"
+# ==============================================================================
+# 🔐 CONFIGURAÇÕES DE API
+# ==============================================================================
 
-MAPA_CSV = {
-    "Inglaterra - Premier League": "E0.csv",
-    "Inglaterra - Championship (2ª)": "E1.csv",
-    "Inglaterra - League One (3ª)": "E2.csv",
-    "Inglaterra - League Two (4ª)": "E3.csv",
-    "Inglaterra - National League (5ª)": "ECI.csv",
-    "Alemanha - Bundesliga 1": "D1.csv",
-    "Alemanha - Bundesliga 2": "D2.csv",
-    "Itália - Serie A": "I1.csv",
-    "Itália - Serie B": "I2.csv",
-    "Espanha - La Liga": "SP1.csv",
-    "Espanha - La Liga 2": "SP2.csv",
-    "França - Ligue 1": "F1.csv",
-    "França - Ligue 2": "F2.csv",
-    "Holanda - Eredivisie": "N1.csv",
-    "Bélgica - Pro League": "B1.csv",
-    "Portugal - Primeira Liga": "P1.csv",
-    "Turquia - Super Lig": "T1.csv",
-    "Grécia - Super League": "G1.csv"
+# --- SUA CHAVE DA API-FOOTBALL ---
+# ⚠️ Cole sua chave dentro das aspas abaixo
+API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
+BASE_URL = "https://v3.football.api-sports.io"
+
+# --- MAPA DE IDs PARA O RADAR API (Principais Ligas para Monitoramento Live) ---
+# Estes IDs conectam o nome da liga ao sistema da API-Football
+LIGAS_API_ID = {
+    "Inglaterra - Premier League": 39,
+    "Inglaterra - Championship": 40,
+    "Inglaterra - League One": 41,
+    "Inglaterra - League Two": 42,
+    "Alemanha - Bundesliga 1": 78,
+    "Alemanha - Bundesliga 2": 79,
+    "Alemanha - 3. Liga": 80,
+    "Espanha - La Liga": 140,
+    "Espanha - La Liga 2": 141,
+    "Itália - Serie A": 135,
+    "Itália - Serie B": 136,
+    "França - Ligue 1": 61,
+    "França - Ligue 2": 62,
+    "Holanda - Eredivisie": 88,
+    "Portugal - Primeira Liga": 94,
+    "Brasil - Série A": 71,
+    "Brasil - Série B": 72,
+    "EUA - MLS": 253,
+    "Turquia - Super Lig": 203,
+    "Áustria - Bundesliga": 218,
+    "Suíça - Super League": 207,
+    "Noruega - Eliteserien": 103,
+    "Suécia - Allsvenskan": 113,
+    "Dinamarca - Superliga": 119,
+    "Escócia - Premiership": 179,
+    "Bélgica - Pro League": 144,
+    "Japão - J-League 1": 98,
+    "Coreia do Sul - K-League 1": 292
 }
 
-# --- BANCO DE DADOS COMPLETO (HISTÓRICO) ---
+# ==============================================================================
+# 📚 BANCO DE DADOS MESTRE (TODAS AS LIGAS)
+# ==============================================================================
 @st.cache_data
-def carregar_dados():
+def carregar_dados_historicos():
     return {
+        # --- DIAMANTE (Super Over > 80%) ---
         "Nova Zelândia - Premiership": 0.92,
         "Islândia - 1. Deild (2ª Div)": 0.89,
         "Singapura - Premier League": 0.88,
-        "Noruega - 1. Divisjon (OBOS)": 0.87,
+        "Noruega - 1. Divisjon": 0.87,
         "Suíça - Challenge League": 0.87,
         "Suíça - Super League": 0.86,
         "EAU - Pro League": 0.86,
@@ -64,6 +84,8 @@ def carregar_dados():
         "EUA - MLS": 0.80,
         "Bélgica - Pro League": 0.80,
         "Suécia - Superettan": 0.80,
+
+        # --- OURO/PRATA (Volume Principal 70-79%) ---
         "Inglaterra - Premier League": 0.79,
         "México - Liga MX": 0.79,
         "Austrália - A-League": 0.79,
@@ -108,6 +130,8 @@ def carregar_dados():
         "Coreia do Sul - K-League 2": 0.72,
         "Paraguai - Primera Division": 0.72,
         "Chipre - 1. Division": 0.71,
+
+        # --- BRONZE (Under/Valor < 70%) ---
         "Grécia - Super League": 0.68,
         "França - Ligue 2": 0.68,
         "Ucrânia - Premier League": 0.68,
@@ -131,113 +155,169 @@ def carregar_dados():
         "Irã - Pro League": 0.55
     }
 
-dados_ligas = carregar_dados()
+dados_ligas = carregar_dados_historicos()
 
-# --- INTERFACE LATERAL ---
-st.sidebar.title("🛠️ Menu Quant")
-modo = st.sidebar.radio("Escolha a Ferramenta:", ["Calculadora de Valor", "Monitor de Calibragem (Auto)"])
+# ==============================================================================
+# 🛠️ FUNÇÕES DE CONEXÃO (API)
+# ==============================================================================
 
-# --- FUNÇÃO 1: CALCULADORA DE VALOR ---
-if modo == "Calculadora de Valor":
-    st.title("🎯 Sniper de Valor: Over 1.5")
-    st.markdown("Validação via **Lei dos Grandes Números**.")
+def get_recent_data_api(league_id):
+    """Busca os últimos 10 jogos via API-Football"""
+    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
+    # last=10 pega os últimos 10 jogos finalizados
+    params = {'league': league_id, 'status': 'FT', 'last': 10}
     
-    liga_selecionada = st.selectbox("Selecione a Liga:", options=list(dados_ligas.keys()))
-    prob_historica = dados_ligas[liga_selecionada]
+    try:
+        response = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params)
+        data = response.json()
+        
+        # Tratamento de erros comuns da API
+        if "errors" in data and data["errors"]:
+            return None, f"Erro da API: {data['errors']}"
+        if not data['response']:
+            return None, "Nenhum jogo recente encontrado para esta liga."
+            
+        lista = []
+        for jogo in data['response']:
+            gols_casa = jogo['goals']['home']
+            gols_fora = jogo['goals']['away']
+            if gols_casa is None or gols_fora is None: continue # Pula jogos sem placar
+
+            gols_total = gols_casa + gols_fora
+            
+            lista.append({
+                'data': jogo['fixture']['date'][:10],
+                'jogo': f"{jogo['teams']['home']['name']} x {jogo['teams']['away']['name']}",
+                'gols': gols_total,
+                'over_15': gols_total >= 2,
+                'fixture_id': jogo['fixture']['id']
+            })
+        return lista, None
+    except Exception as e:
+        return None, f"Erro de Conexão: {str(e)}"
+
+def get_pinnacle_odd(fixture_id):
+    """Busca a Odd Específica da Pinnacle (Bookmaker ID 4)"""
+    headers = {'x-rapidapi-key': API_KEY}
+    url = f"{BASE_URL}/odds?fixture={fixture_id}&bookmaker=4" 
+    
+    try:
+        r = requests.get(url, headers=headers).json()
+        if r['response']:
+            # Varre os mercados procurando Over/Under
+            bets = r['response'][0]['bookmakers'][0]['bets']
+            for bet in bets:
+                if bet['name'] in ['Goals Over/Under', 'Goals Over/Under - 1st Half']:
+                    for val in bet['values']:
+                        if val['value'] == 'Over 1.5':
+                            return float(val['odd'])
+        return None
+    except:
+        return None
+
+# ==============================================================================
+# 📱 INTERFACE DO APLICATIVO
+# ==============================================================================
+
+st.sidebar.title("🧰 Menu Sniper")
+modo = st.sidebar.radio("Ferramenta:", ["1. Calculadora Manual (Banco de Dados)", "2. Radar API (Pinnacle Live)"])
+
+# --- MODO 1: CALCULADORA MANUAL ---
+if modo == "1. Calculadora Manual (Banco de Dados)":
+    st.title("🎯 Calculadora de Valor Quant")
+    st.caption("Baseada na Lei dos Grandes Números e Médias Históricas.")
+
+    # Seletor de Ligas (Organizado alfabeticamente ou mantendo ordem do dict)
+    liga_sel = st.selectbox("Selecione a Liga:", list(dados_ligas.keys()))
+    prob = dados_ligas[liga_sel]
     
     col1, col2 = st.columns(2)
     with col1:
-        odd_casa = st.number_input("Odd da Casa:", min_value=1.01, max_value=10.0, value=1.30, step=0.01)
+        odd = st.number_input("Odd da Casa:", min_value=1.01, max_value=10.0, value=1.30, step=0.01)
     
-    # Lógica de Margem
-    if prob_historica < 0.70:
-        margem_min = 8.0 
-        tipo_liga = "Under (Risco Alto)"
-    elif "Tier" in liga_selecionada or "2" in liga_selecionada or "3" in liga_selecionada:
-        margem_min = 6.0 
-        tipo_liga = "Inferior (Risco Médio)"
-    else:
-        margem_min = 4.0 
-        tipo_liga = "Principal (Volume)"
-
-    odd_justa = 1 / prob_historica
-    odd_gatilho = (1 + (margem_min/100)) / prob_historica
-    ev_percentual = ((prob_historica * odd_casa) - 1) * 100
+    # Lógica de Margem Dinâmica
+    if prob < 0.70: 
+        margem = 8.0 
+        perfil = "Under / Defensiva"
+    elif "2" in liga_sel or "3" in liga_sel or "Tier" in liga_sel:
+        margem = 6.0
+        perfil = "Liga Inferior / Volátil"
+    else: 
+        margem = 4.0
+        perfil = "Liga Principal / Volume"
+    
+    # Cálculos EV
+    fair = 1/prob
+    gatilho = (1 + (margem/100)) / prob
+    ev = ((prob * odd) - 1) * 100
     
     st.divider()
+    
+    # Exibição de Métricas
     c1, c2, c3 = st.columns(3)
-    c1.metric("Histórico", f"{prob_historica*100:.1f}%")
-    c2.metric("Fair Price", f"@{odd_justa:.2f}")
-    c3.metric("Gatilho", f"@{odd_gatilho:.2f}", delta_color="inverse")
+    c1.metric("Prob. Histórica", f"{prob*100:.0f}%")
+    c2.metric("Odd Justa", f"@{fair:.2f}")
+    c3.metric("Odd Gatilho", f"@{gatilho:.2f}", delta_color="inverse")
     
-    st.subheader("Veredito:")
-    if ev_percentual >= margem_min:
-        st.success(f"✅ **APOSTAR!** (Valor: +{ev_percentual:.2f}%)")
-    elif ev_percentual > 0:
-        st.warning(f"⚠️ **Riscoso** (Valor Baixo: +{ev_percentual:.2f}%)")
+    st.caption(f"Perfil: {perfil} | Margem Exigida: {margem}%")
+    
+    # Veredito
+    if ev >= margem:
+        st.success(f"✅✅ **GREEN LIGHT: APOSTAR!**\n\nValor Encontrado: **+{ev:.2f}%**")
+    elif ev > 0:
+        st.warning(f"⚠️ **YELLOW LIGHT: CUIDADO**\n\nValor Baixo (+{ev:.2f}%) - Margem insuficiente.")
     else:
-        st.error(f"❌ **NÃO APOSTAR** (EV: {ev_percentual:.2f}%)")
+        st.error(f"❌ **RED LIGHT: NÃO APOSTAR**\n\nEV Negativo ({ev:.2f}%) - A banca vence no longo prazo.")
 
-# --- FUNÇÃO 2: MONITOR AUTOMÁTICO ---
-elif modo == "Monitor de Calibragem (Auto)":
-    st.title("⚖️ Calibragem Automática")
-    st.markdown("Monitoramento de tendência da Temporada 24/25.")
+# --- MODO 2: RADAR API ---
+elif modo == "2. Radar API (Pinnacle Live)":
+    st.title("📡 Radar API: Tendência Live")
+    st.caption("Analisa as últimas 10 rodadas reais + Odds Pinnacle")
     
-    liga_calibrar = st.selectbox("Liga para Analisar:", options=list(dados_ligas.keys()))
-    media_hist = dados_ligas[liga_calibrar]
+    # Aviso de API Key
+    if API_KEY == "SUA_API_KEY_AQUI":
+        st.error("⚠️ **ATENÇÃO:** Você precisa configurar sua API KEY no código para isso funcionar.")
     
-    st.info(f"Média Histórica (Base): **{media_hist*100:.1f}%**")
+    liga_api = st.selectbox("Selecione a Liga para Monitorar:", list(LIGAS_API_ID.keys()))
     
-    # Verifica se a liga tem suporte automático
-    if liga_calibrar in MAPA_CSV:
-        st.write("---")
-        if st.button("🔄 Buscar Dados da Internet (Tempo Real)"):
-            with st.spinner('Baixando dados oficiais da Inglaterra...'):
-                try:
-                    # Monta a URL
-                    arquivo = MAPA_CSV[liga_calibrar]
-                    url_completa = URL_BASE + arquivo
+    if st.button("🔄 Analisar Tendência Recente"):
+        id_liga = LIGAS_API_ID[liga_api]
+        
+        with st.spinner(f"Conectando à API-Football e baixando dados da {liga_api}..."):
+            dados, erro = get_recent_data_api(id_liga)
+            
+            if erro:
+                st.error(erro)
+            else:
+                df = pd.DataFrame(dados)
+                media_rec = df['over_15'].mean()
+                total_jogos = len(df)
+                
+                # Resumo da Tendência
+                col1, col2 = st.columns(2)
+                col1.metric("Jogos Analisados", total_jogos)
+                col2.metric("Frequência Recente (Over 1.5)", f"{media_rec*100:.0f}%")
+                
+                # Comparação com Histórico (Se a liga existir no banco manual)
+                # Tenta casar o nome da chave da API com a chave do Manual (pode não bater exato pelo nome)
+                st.info("💡 Compare este número com a 'Probabilidade Histórica' da Calculadora. Se a Recente for maior, a liga está em tendência de alta.")
+                
+                st.write("---")
+                st.subheader("🔍 Odds de Fechamento (Pinnacle)")
+                st.caption("Clique no botão para revelar a odd (Consome 1 requisição)")
+                
+                # Tabela Interativa
+                for i, row in df.iterrows():
+                    c1, c2, c3, c4 = st.columns([2, 4, 1, 2])
+                    c1.write(f"**{row['data']}**")
+                    c2.write(row['jogo'])
+                    c3.write(f"**{row['gols']}**")
                     
-                    # Lê o CSV direto da internet
-                    df = pd.read_csv(url_completa)
-                    
-                    # Filtra colunas de gols (FTHG = Full Time Home Goals, FTAG = Away)
-                    # Tratamento de erro para arquivos vazios ou início de temporada
-                    if 'FTHG' in df.columns and 'FTAG' in df.columns:
-                        df['TotalGols'] = df['FTHG'] + df['FTAG']
-                        jogos_totais = len(df)
-                        jogos_over = len(df[df['TotalGols'] >= 2]) # Over 1.5 é >= 2
-                        
-                        if jogos_totais > 0:
-                            media_atual = jogos_over / jogos_totais
-                            desvio = (media_atual - media_hist) * 100
-                            
-                            st.success("Dados baixados com sucesso!")
-                            col_a, col_b = st.columns(2)
-                            col_a.metric("Jogos Analisados", jogos_totais)
-                            col_b.metric("Média Atual (24/25)", f"{media_atual*100:.1f}%", delta=f"{desvio:.2f}%")
-                            
-                            st.subheader("Diagnóstico do Robô:")
-                            if abs(desvio) <= 5.0:
-                                st.success("✅ **ESTÁVEL:** A liga respeita o padrão histórico.")
-                            elif desvio > 5.0:
-                                st.info("🔥 **ON FIRE:** A liga está mais Over que o normal. Aproveite!")
-                            else:
-                                st.error("❄️ **GELADA:** A liga está Under. Aumente a margem de segurança!")
-                                st.write(f"Nova Odd Justa Sugerida: @{1/media_atual:.2f}")
+                    # Botão individual de Odd
+                    bt_k = f"btn_{row['fixture_id']}"
+                    if c4.button("Ver Odd", key=bt_k):
+                        odd = get_pinnacle_odd(row['fixture_id'])
+                        if odd:
+                            c4.success(f"@{odd}")
                         else:
-                            st.warning("A temporada parece não ter começado ou o arquivo está vazio.")
-                    else:
-                        st.error("Erro na leitura das colunas do arquivo CSV.")
-                        
-                except Exception as e:
-                    st.error(f"Erro ao conectar com a base de dados: {e}")
-    else:
-        st.warning("⚠️ Esta liga não possui dados automáticos gratuitos disponíveis.")
-        st.write("Insira os dados manualmente abaixo (consulte Flashscore):")
-        
-        c_jogos = st.number_input("Total de Jogos:", min_value=1, value=10)
-        c_over = st.number_input("Jogos com +1.5:", min_value=0, value=8)
-        
-        m_atual = c_over / c_jogos
-        st.metric("Média Atual", f"{m_atual*100:.1f}%", delta=f"{(m_atual-media_hist)*100:.1f}%")
+                            c4.warning("N/A")
