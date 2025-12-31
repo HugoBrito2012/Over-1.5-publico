@@ -8,8 +8,8 @@ from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper Pro: Margens Ajustadas",
-    page_icon="🎯",
+    page_title="Sniper Pro: Stable & Adjusted",
+    page_icon="🦅",
     layout="wide"
 )
 
@@ -114,16 +114,12 @@ def carregar_dados_consolidados():
 dados_completos = carregar_dados_consolidados()
 
 # ==============================================================================
-# 🛠️ CORE: API & LÓGICA DE MARGEM
+# 🛠️ CORE: API & LÓGICA
 # ==============================================================================
 
 def definir_margem_grupo(probabilidade):
     """
     Define a margem e o grupo com base na probabilidade histórica.
-    1. Super Over (>75%): 5.0%
-    2. Over (70-74%): 6.5% (Ex: Brasil A)
-    3. Intermediária (66-69%): 7.5%
-    4. Under (<66%): 9.0%
     """
     if probabilidade >= 0.75:
         return 0.05, "💎 SUPER OVER (5%)"
@@ -135,7 +131,6 @@ def definir_margem_grupo(probabilidade):
         return 0.09, "🥉 UNDER (9.0%)"
 
 def get_market_average_odd(fixture_id):
-    """ Busca a MÉDIA das odds de Over 1.5 de TODOS os bookmakers. """
     str_id = str(fixture_id)
     if str_id in cache_odds: return cache_odds[str_id]
     
@@ -145,7 +140,6 @@ def get_market_average_odd(fixture_id):
     try:
         r = requests.get(url, headers=headers).json()
         odds_encontradas = []
-        
         if r['response']:
             bookmakers = r['response'][0]['bookmakers']
             for bookie in bookmakers:
@@ -291,7 +285,7 @@ modo = st.sidebar.radio("Modo:", [
 ])
 
 # ------------------------------------------------------------------------------
-# MODO 1: CALCULADORA MANUAL (MARGENS AJUSTADAS)
+# MODO 1: CALCULADORA MANUAL
 # ------------------------------------------------------------------------------
 if modo == "1. Calculadora Manual":
     st.title("🧪 Calculadora Quant (Histórica)")
@@ -309,14 +303,11 @@ if modo == "1. Calculadora Manual":
     
     prob = info_liga["super"] if tem_super else info_liga["base"]
     
-    # --- NOVA LÓGICA DE MARGEM AUTOMÁTICA ---
+    # MARGEM AUTOMÁTICA
     margem, grupo_nome = definir_margem_grupo(prob)
     margem_percent = margem * 100
     
-    st.markdown(f"**Grupo:** {grupo_nome} | **Margem Aplicada:** {margem_percent:.1f}%")
-
-    if tem_super: st.success(f"Média Turbo: **{prob*100:.1f}%**")
-    else: st.markdown(f"Média Base: **{prob*100:.1f}%**")
+    st.markdown(f"**Grupo:** {grupo_nome} | **Margem Mínima:** {margem_percent:.1f}%")
 
     col1, col2 = st.columns(2)
     with col1: odd = st.number_input("Odd Casa:", 1.01, 10.0, 1.30)
@@ -330,7 +321,6 @@ if modo == "1. Calculadora Manual":
     c2.metric("Fair", f"@{1/prob:.2f}")
     c3.metric("Gatilho", f"@{gatilho:.2f}", delta_color="inverse")
     
-    # 2. Correção Lógica de Aposta
     if odd >= gatilho: st.success(f"✅ APOSTAR! (+{ev:.1f}%)")
     else: st.error("❌ NÃO APOSTAR")
 
@@ -361,11 +351,11 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 stake = 100 
                 
                 for i, row in df.iterrows():
+                    # Delay anti-bloqueio (Rate Limit)
+                    time.sleep(0.2)
+                    
                     odd = get_market_average_odd(row['fixture_id'])
-                    
                     prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
-                    
-                    # --- MARGEM CORRETA ---
                     margem, _ = definir_margem_grupo(prob_ref)
                     gatilho = (1 + margem) / prob_ref
                     
@@ -403,8 +393,6 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
 elif modo == "3. Deep Backtest (5 Temporadas)":
     st.title("📚 Backtest Profundo (+EV)")
     
-    if API_KEY == "SUA_API_KEY_AQUI": st.error("⚠️ Configure a API KEY no código.")
-    
     col_a, col_b = st.columns(2)
     with col_a: liga_api = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
     with col_b:
@@ -419,23 +407,25 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
         if erro: st.error(erro)
         else:
             df_final = df.head(limite_jogos).copy()
-            st.info(f"Jogos mapeados: {len(df_final)}. Calculando Odds Média...")
+            st.info(f"Jogos mapeados: {len(df_final)}. Buscando Odds médias (Isso pode demorar, respeitando limite da API)...")
             
             resultados_financeiros = []
             odds_fechamento = []
             odds_gatilho_lista = []
             decisao_lista = []
+            
             info_liga = dados_completos[liga_api]
             bar_odds = st.progress(0)
             odds_encontradas_cnt = 0
             
             for i, row in df_final.iterrows():
+                # --- DELAY VITAL PARA NÃO TRAVAR API ---
+                time.sleep(0.2) 
+                
                 odd_avg = get_market_average_odd(row['fixture_id'])
                 if odd_avg: odds_encontradas_cnt += 1
                 
                 prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
-                
-                # --- MARGEM CORRETA ---
                 margem, _ = definir_margem_grupo(prob_ref)
                 odd_gatilho = (1 + margem) / prob_ref
                 
@@ -461,7 +451,7 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             bar_odds.empty()
             
             st.caption(f"Diagnóstico: Odds médias recuperadas para {odds_encontradas_cnt} de {len(df_final)} jogos.")
-            if odds_encontradas_cnt == 0: st.error("ERRO CRÍTICO: Não foi possível obter odds de nenhum bookmaker.")
+            if odds_encontradas_cnt == 0: st.error("ERRO CRÍTICO: Não foi possível obter odds.")
             
             df_final['Odd Média'] = odds_fechamento
             df_final['Odd Gatilho'] = odds_gatilho_lista
