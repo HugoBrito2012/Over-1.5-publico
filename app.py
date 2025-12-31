@@ -13,10 +13,14 @@ st.set_page_config(
 # ==============================================================================
 # 🔐 CONFIGURAÇÕES DE API
 # ==============================================================================
-API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
+API_KEY = "SUA_API_KEY_AQUI"  # <--- COLE SUA CHAVE AQUI
 BASE_URL = "https://v3.football.api-sports.io"
 
-# IDs para Monitoramento Live (Principais + Novas Inclusões)
+# Ano da Temporada para Análise (Ajuste conforme necessário)
+# Para Europa (24/25) use 2024. Para Brasil/Américas (2024) use 2024.
+TEMPORADA_ATUAL = 2024 
+
+# IDs para Monitoramento Live
 LIGAS_API_ID = {
     "Inglaterra - Premier League": 39, "Inglaterra - Championship": 40,
     "Inglaterra - League One": 41, "Inglaterra - League Two": 42,
@@ -27,7 +31,7 @@ LIGAS_API_ID = {
     "França - National (3ª)": 63,
     "Holanda - Eredivisie": 88, "Portugal - Primeira Liga": 94,
     "Brasil - Série A": 71, "Brasil - Série B": 72,
-    "Colômbia - Primera A": 239, # <--- COLÔMBIA ADICIONADA
+    "Colômbia - Primera A": 239,
     "EUA - MLS": 253, "Turquia - Super Lig": 203,
     "Áustria - Bundesliga": 218, "Suíça - Super League": 207,
     "Noruega - Eliteserien": 103, "Suécia - Allsvenskan": 113,
@@ -36,32 +40,71 @@ LIGAS_API_ID = {
 }
 
 # ==============================================================================
-# 🧠 BANCO DE DADOS HÍBRIDO (COM CLUSTERS DE SUPER TIMES)
+# 🧠 BANCO DE DADOS HÍBRIDO (COM CLUSTERS E NOMES DE API)
 # ==============================================================================
 
 @st.cache_data
 def carregar_dados_consolidados():
     # 1. LIGAS COM CLUSTER (Separamos "Super Times" do "Resto")
-    # Nestas ligas, a média engana. Separamos o joio do trigo.
+    # 'api_names': Strings parciais para identificar o time na API
     dados_especiais = {
-        "Portugal - Primeira Liga": {"base": 0.69, "super": 0.89, "times": ["Sporting", "Benfica", "Porto"]},
-        "Holanda - Eredivisie": {"base": 0.79, "super": 0.94, "times": ["PSV", "Feyenoord", "Ajax"]},
-        "Escócia - Premiership": {"base": 0.72, "super": 0.91, "times": ["Celtic", "Rangers"]},
-        "Alemanha - Bundesliga 1": {"base": 0.81, "super": 0.92, "times": ["Bayern", "Leverkusen", "Dortmund", "Leipzig"]},
-        "Espanha - La Liga": {"base": 0.68, "super": 0.85, "times": ["Real Madrid", "Barcelona"]},
-        "Inglaterra - Premier League": {"base": 0.76, "super": 0.88, "times": ["Man City", "Liverpool", "Arsenal"]},
-        "Itália - Serie A": {"base": 0.74, "super": 0.86, "times": ["Inter", "Atalanta"]},
-        "Turquia - Super Lig": {"base": 0.72, "super": 0.89, "times": ["Galatasaray", "Fenerbahce"]},
-        "Áustria - Bundesliga": {"base": 0.78, "super": 0.90, "times": ["Salzburg", "Sturm Graz"]},
-        "França - Ligue 1": {"base": 0.73, "super": 0.88, "times": ["PSG"]},
-        "Grécia - Super League": {"base": 0.62, "super": 0.81, "times": ["PAOK", "Olympiacos", "AEK"]},
-        "Ucrânia - Premier League": {"base": 0.64, "super": 0.82, "times": ["Shakhtar", "Dynamo Kiev"]},
-        "Rep. Tcheca - 1. Liga": {"base": 0.71, "super": 0.86, "times": ["Sparta Praga", "Slavia Praga"]}
+        "Portugal - Primeira Liga": {
+            "base": 0.69, "super": 0.89, 
+            "times": ["Sporting", "Benfica", "Porto"]
+        },
+        "Holanda - Eredivisie": {
+            "base": 0.79, "super": 0.94, 
+            "times": ["PSV", "Feyenoord", "Ajax"]
+        },
+        "Escócia - Premiership": {
+            "base": 0.72, "super": 0.91, 
+            "times": ["Celtic", "Rangers"]
+        },
+        "Alemanha - Bundesliga 1": {
+            "base": 0.81, "super": 0.92, 
+            "times": ["Bayern Munich"]
+        },
+        "Espanha - La Liga": {
+            "base": 0.68, "super": 0.85, 
+            "times": ["Real Madrid", "Barcelona"]
+        },
+        "Inglaterra - Premier League": {
+            "base": 0.76, "super": 0.88, 
+            "times": ["Manchester City", "Liverpool", "Arsenal"]
+        },
+        "Itália - Serie A": {
+            "base": 0.74, "super": 0.86, 
+            "times": ["Inter", "Atalanta"]
+        },
+        "Turquia - Super Lig": {
+            "base": 0.72, "super": 0.89, 
+            "times": ["Galatasaray", "Fenerbahce"]
+        },
+        "Áustria - Bundesliga": {
+            "base": 0.78, "super": 0.90, 
+            "times": ["Salzburg"]
+        },
+        "França - Ligue 1": {
+            "base": 0.73, "super": 0.88, 
+            "times": ["Paris Saint Germain", "PSG"]
+        },
+        "Grécia - Super League": {
+            "base": 0.62, "super": 0.81, 
+            "times": ["PAOK", "Olympiacos", "AEK"]
+        },
+        "Ucrânia - Premier League": {
+            "base": 0.64, "super": 0.82, 
+            "times": ["Shakhtar", "Dynamo Kiev"]
+        },
+        "Rep. Tcheca - 1. Liga": {
+            "base": 0.71, "super": 0.86, 
+            "times": ["Sparta Prague", "Slavia Prague"]
+        }
     }
 
-    # 2. LIGAS GERAIS (Banco de Dados Massivo - Homogêneas)
+    # 2. LIGAS GERAIS (Homogêneas)
     dados_gerais_lista = {
-        # DIAMANTE (Muito Over)
+        # DIAMANTE
         "Nova Zelândia - Premiership": 0.92, "Islândia - 1. Deild": 0.89,
         "Singapura - Premier League": 0.88, "Noruega - 1. Divisjon": 0.87,
         "Suíça - Challenge League": 0.87, "Suíça - Super League": 0.86,
@@ -73,8 +116,7 @@ def carregar_dados_consolidados():
         "País de Gales - Premier": 0.82, "Alemanha - Bundesliga 2": 0.81,
         "Dinamarca - 1st Division": 0.81, "EUA - MLS": 0.80,
         "Bélgica - Pro League": 0.80, "Suécia - Superettan": 0.80,
-        
-        # OURO/PRATA (Médias/Altas)
+        # OURO/PRATA
         "México - Liga MX": 0.79, "Austrália - A-League": 0.79,
         "Suécia - Allsvenskan": 0.79, "Bélgica - Challenger Pro": 0.79,
         "Arábia Saudita - Pro League": 0.79, "Dinamarca - Superliga": 0.78,
@@ -92,180 +134,226 @@ def carregar_dados_consolidados():
         "Brasil - Série A": 0.72, "Espanha - La Liga": 0.72,
         "Coreia do Sul - K-League 2": 0.72, "Paraguai - Primera Division": 0.72,
         "Chipre - 1. Division": 0.71,
-        
-        # BRONZE/UNDER (Oportunidades de Valor)
+        # BRONZE/UNDER
         "França - National (3ª)": 0.69,
         "França - Ligue 2": 0.68, "Portugal - Liga 2": 0.68,
         "Itália - Serie B": 0.67, "Romênia - Liga 1": 0.67,
         "Espanha - La Liga 2": 0.66, "Uruguai - Primera Division": 0.66,
         "Venezuela - Primera Division": 0.66, "Brasil - Série B": 0.65,
         "Portugal - Liga 3": 0.65, "Argentina - Liga Profesional": 0.64,
-        "Colômbia - Primera A": 0.65, # <--- COLÔMBIA AQUI (Média conservadora de 65%)
+        "Colômbia - Primera A": 0.65,
         "Rússia - FNL": 0.64, "Brasil - Série C": 0.63,
         "Colômbia - Primera B": 0.62, "Egito - Premier League": 0.62,
         "África do Sul - Premiership": 0.61, "Marrocos - Botola Pro": 0.60,
         "Argentina - Primera B": 0.60, "Irã - Pro League": 0.55
     }
 
-    # FUSÃO INTELIGENTE
+    # FUSÃO
     banco_final = dados_especiais.copy()
-    
     for liga, prob in dados_gerais_lista.items():
         if liga not in banco_final:
             banco_final[liga] = {
-                "base": prob,
-                "super": prob, # Sem cluster, a média é igual
-                "times": []    # Lista vazia = Liga Homogênea
+                "base": prob, "super": prob, "times": []
             }
-            
     return banco_final
 
-dados = carregar_dados_consolidados()
+dados_completos = carregar_dados_consolidados()
 
 # ==============================================================================
-# 🛠️ FUNÇÕES DE API
+# 🛠️ LÓGICA DE API AVANÇADA (10 ÚLTIMAS RODADAS + CLUSTER)
 # ==============================================================================
-def get_recent_data_api(league_id):
+
+def analisar_ultimas_rodadas(league_id, nome_liga):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
-    params = {'league': league_id, 'status': 'FT', 'last': 10}
+    
+    # 1. Busca TODOS os jogos finalizados (status=FT) da temporada atual
+    params = {'league': league_id, 'season': TEMPORADA_ATUAL, 'status': 'FT'}
+    
     try:
-        r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
-        if "errors" in r and r["errors"]: return None, f"Erro API: {r['errors']}"
-        if not r['response']: return None, "Sem dados recentes."
+        response = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
         
-        lista = []
-        for j in r['response']:
-            gols_casa = j['goals']['home']
-            gols_fora = j['goals']['away']
-            if gols_casa is None or gols_fora is None: continue
+        if "errors" in response and response["errors"]:
+            return None, None, f"Erro API: {response['errors']}"
+        if not response['response']:
+            # Tenta temporada anterior se a atual estiver vazia
+            params['season'] = TEMPORADA_ATUAL - 1
+            response = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
+            if not response['response']:
+                return None, None, "Sem dados disponíveis (Temporada atual e anterior vazias)."
+            
+        df = pd.json_normalize(response['response'])
+        
+        # 2. Processamento dos Dados
+        # Renomear colunas para facilitar
+        df = df[['fixture.date', 'league.round', 'teams.home.name', 'teams.away.name', 'goals.home', 'goals.away']]
+        df.columns = ['data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora']
+        
+        # Ordenar por data (recente primeiro) e extrair rodadas únicas
+        # 'league.round' vem como string (ex: "Regular Season - 1").
+        # Vamos pegar as 10 strings de rodada mais recentes distintas.
+        rodadas_unicas = df['rodada'].unique()
+        
+        # Pega as últimas 10 rodadas (Assumindo que a ordem cronológica do DF ajuda, mas o ideal é garantir)
+        # Como o DF não vem necessariamente ordenado por rodada, vamos filtrar.
+        # Simplificação: Pegamos os últimos jogos e agrupamos.
+        
+        # Estratégia Robusta: Pegar todos os jogos, converter data, ordenar.
+        df['data'] = pd.to_datetime(df['data'])
+        df = df.sort_values('data', ascending=False)
+        
+        # Identificar as últimas 10 rodadas jogadas
+        rodadas_jogadas = df['rodada'].unique()[:10] # Pega as 10 últimas etiquetas de rodada que apareceram
+        
+        # Filtrar o DF para conter apenas essas rodadas
+        df_recorte = df[df['rodada'].isin(rodadas_jogadas)].copy()
+        
+        # 3. Aplicar Cluster
+        df_recorte['total_gols'] = df_recorte['gols_casa'] + df_recorte['gols_fora']
+        df_recorte['over_15'] = df_recorte['total_gols'] >= 2
+        
+        # Buscar lista de super times do nosso banco
+        info_liga = dados_completos.get(nome_liga, {"times": []})
+        super_times = info_liga["times"]
+        
+        # Função para checar se é jogo de super time
+        def is_super_game(row):
+            for time in super_times:
+                # Checa se o nome do super time está contido no nome do time da API
+                if time in row['casa'] or time in row['fora']:
+                    return True
+            return False
+            
+        df_recorte['eh_super'] = df_recorte.apply(is_super_game, axis=1)
+        
+        # 4. Calcular Médias Separadas
+        # Grupo Base (Jogos sem super times)
+        df_base = df_recorte[df_recorte['eh_super'] == False]
+        media_base = df_base['over_15'].mean() if len(df_base) > 0 else 0.0
+        n_base = len(df_base)
+        
+        # Grupo Super (Jogos com super times)
+        df_super = df_recorte[df_recorte['eh_super'] == True]
+        media_super = df_super['over_15'].mean() if len(df_super) > 0 else 0.0
+        n_super = len(df_super)
+        
+        stats = {
+            "rodadas_analisadas": len(rodadas_jogadas),
+            "total_jogos": len(df_recorte),
+            "media_base": media_base,
+            "qtd_base": n_base,
+            "media_super": media_super,
+            "qtd_super": n_super,
+            "super_times_lista": super_times
+        }
+        
+        return stats, df_recorte, None
 
-            gols_total = gols_casa + gols_fora
-            lista.append({
-                'data': j['fixture']['date'][:10],
-                'jogo': f"{j['teams']['home']['name']} x {j['teams']['away']['name']}",
-                'gols': gols_total,
-                'over': gols_total >= 2,
-                'fixture_id': j['fixture']['id']
-            })
-        return lista, None
-    except Exception as e: return None, str(e)
-
-def get_pinnacle_odd(fixture_id):
-    headers = {'x-rapidapi-key': API_KEY}
-    url = f"{BASE_URL}/odds?fixture={fixture_id}&bookmaker=4" 
-    try:
-        r = requests.get(url, headers=headers).json()
-        if r['response']:
-            bets = r['response'][0]['bookmakers'][0]['bets']
-            for bet in bets:
-                if bet['name'] in ['Goals Over/Under', 'Goals Over/Under - 1st Half']:
-                    for val in bet['values']:
-                        if val['value'] == 'Over 1.5':
-                            return float(val['odd'])
-        return None
-    except: return None
+    except Exception as e:
+        return None, None, str(e)
 
 # ==============================================================================
 # 📱 INTERFACE DO APLICATIVO
 # ==============================================================================
 st.sidebar.title("🧰 Menu Sniper")
-modo = st.sidebar.radio("Ferramenta:", ["1. Calculadora Cluster (Banco Completo)", "2. Radar API (Live)"])
+modo = st.sidebar.radio("Ferramenta:", ["1. Calculadora Manual", "2. Radar API (10 Rodadas)"])
 
-# --- MODO 1: CALCULADORA MANUAL COM CLUSTER ---
-if modo == "1. Calculadora Cluster (Banco Completo)":
-    st.title("🧪 Calculadora Quant (Cluster)")
-    st.caption("Banco de Dados: +90 Ligas | Lógica: Refinamento de Super Times")
+# --- MODO 1: CALCULADORA MANUAL ---
+if modo == "1. Calculadora Manual":
+    st.title("🧪 Calculadora Quant (Histórica)")
     
-    # Ordenar lista
-    lista_ligas = sorted(list(dados.keys()))
+    lista_ligas = sorted(list(dados_completos.keys()))
     liga_sel = st.selectbox("Selecione a Liga:", lista_ligas)
+    info_liga = dados_completos[liga_sel]
     
-    info_liga = dados[liga_sel]
-    
-    # --- LÓGICA DE EXIBIÇÃO DO CLUSTER ---
     tem_super = False
-    
     if len(info_liga["times"]) > 0:
-        st.info(f"⚡ **Super Times identificados:** {', '.join(info_liga['times'])}")
-        tem_super = st.checkbox("🔥 Este jogo envolve algum desses Super Times?")
+        st.info(f"⚡ **Super Times:** {', '.join(info_liga['times'])}")
+        tem_super = st.checkbox("🔥 Jogo envolve Super Time?")
     else:
-        st.write("⚖️ Liga Homogênea (Média única aplicada).")
+        st.write("⚖️ Liga Homogênea.")
     
-    # Define a probabilidade
-    if tem_super:
-        prob = info_liga["super"]
-        st.success(f"Usando Média Turbo (Jogos Grandes): **{prob*100:.1f}%**")
-    else:
-        prob = info_liga["base"]
-        st.markdown(f"Usando Média Base (Jogos Comuns): **{prob*100:.1f}%**")
+    prob = info_liga["super"] if tem_super else info_liga["base"]
+    
+    if tem_super: st.success(f"Média Turbo: **{prob*100:.1f}%**")
+    else: st.markdown(f"Média Base: **{prob*100:.1f}%**")
 
-    # Inputs
     col1, col2 = st.columns(2)
-    with col1:
-        odd = st.number_input("Odd da Casa:", 1.01, 10.0, 1.30)
+    with col1: odd = st.number_input("Odd Casa:", 1.01, 10.0, 1.30)
     
-    # Margem Dinâmica
-    if prob < 0.70: 
-        margem = 8.0
-        perfil = "Liga Under / Defensiva"
-    elif "2" in liga_sel or "3" in liga_sel or "Tier" in liga_sel or "National" in liga_sel:
-        margem = 6.0
-        perfil = "Divisão Inferior"
-    else: 
-        margem = 4.0
-        perfil = "Liga Principal"
+    # Margem
+    if prob < 0.70: margem = 9.0
+    elif "2" in liga_sel or "3" in liga_sel or "Tier" in liga_sel: margem = 7.0
+    else: margem = 5.0
 
-    # Cálculos
-    fair = 1/prob
-    gatilho = (1 + (margem/100)) / prob
     ev = ((prob * odd) - 1) * 100
+    gatilho = (1 + (margem/100)) / prob
     
     st.divider()
     c1, c2, c3 = st.columns(3)
-    c1.metric("Prob. Real", f"{prob*100:.0f}%")
-    c2.metric("Odd Justa", f"@{fair:.2f}")
+    c1.metric("Prob.", f"{prob*100:.0f}%")
+    c2.metric("Fair", f"@{1/prob:.2f}")
     c3.metric("Gatilho", f"@{gatilho:.2f}", delta_color="inverse")
     
-    st.caption(f"Perfil: {perfil} | Margem Exigida: {margem}%")
-    
-    if ev >= margem:
-        st.success(f"✅✅ **APOSTAR!** (EV: +{ev:.2f}%)")
-    elif ev > 0:
-        st.warning(f"⚠️ Valor Baixo (+{ev:.2f}%)")
-    else:
-        st.error(f"❌ NÃO APOSTAR (EV: {ev:.2f}%)")
+    if ev >= margem: st.success(f"✅ APOSTAR! (+{ev:.1f}%)")
+    elif ev > 0: st.warning(f"⚠️ Valor Baixo (+{ev:.1f}%)")
+    else: st.error("❌ NÃO APOSTAR")
 
 # --- MODO 2: RADAR API ---
-elif modo == "2. Radar API (Live)":
-    st.title("📡 Radar API: Tendência Live")
+elif modo == "2. Radar API (10 Rodadas)":
+    st.title("📡 Radar de Tendência (Live)")
+    st.caption("Analisa as últimas 10 rodadas e aplica o filtro de Cluster.")
     
     if API_KEY == "SUA_API_KEY_AQUI":
-        st.error("⚠️ Configure sua API KEY no código.")
+        st.error("⚠️ Configure a API KEY no código.")
     
     liga_api = st.selectbox("Liga para Monitorar:", list(LIGAS_API_ID.keys()))
     
-    if st.button("🔄 Analisar Agora"):
+    if st.button("🔄 Buscar Dados da API"):
         id_liga = LIGAS_API_ID[liga_api]
-        with st.spinner("Buscando dados na API..."):
-            d, e = get_recent_data_api(id_liga)
+        
+        with st.spinner(f"Baixando temporada completa da {liga_api}..."):
+            stats, df_jogos, erro = analisar_ultimas_rodadas(id_liga, liga_api)
             
-            if e: st.error(e)
+            if erro:
+                st.error(erro)
             else:
-                df = pd.DataFrame(d)
-                media_rec = df['over'].mean()
+                # Recuperar Média Histórica para Comparação
+                hist_base = dados_completos[liga_api]["base"]
+                hist_super = dados_completos[liga_api]["super"]
                 
-                c1, c2 = st.columns(2)
-                c1.metric("Jogos", len(df))
-                c2.metric("Over 1.5 Recente", f"{media_rec*100:.0f}%")
+                st.success(f"Dados obtidos! Analisando {stats['rodadas_analisadas']} rodadas ({stats['total_jogos']} jogos).")
+                
+                # EXIBIÇÃO DOS RESULTADOS (COMPARATIVO)
+                st.subheader("📊 Diagnóstico de Tendência")
+                
+                col1, col2 = st.columns(2)
+                
+                # Coluna 1: Base (Times Comuns)
+                with col1:
+                    st.markdown("### 🛡️ Jogos Comuns")
+                    if stats['qtd_base'] > 0:
+                        delta_base = (stats['media_base'] - hist_base) * 100
+                        st.metric("Média Recente", f"{stats['media_base']*100:.1f}%", delta=f"{delta_base:.1f}%")
+                        st.caption(f"Baseado em {stats['qtd_base']} jogos.")
+                        if delta_base < -5: st.error("Tendência: UNDER (Ajuste a Odd!)")
+                        elif delta_base > 5: st.success("Tendência: OVER (Valor!)")
+                        else: st.info("Tendência: NORMAL")
+                    else:
+                        st.warning("Sem jogos comuns nas últimas rodadas.")
+
+                # Coluna 2: Super Times
+                with col2:
+                    st.markdown("### 🔥 Super Times")
+                    if len(stats['super_times_lista']) > 0:
+                        if stats['qtd_super'] > 0:
+                            delta_super = (stats['media_super'] - hist_super) * 100
+                            st.metric("Média Recente", f"{stats['media_super']*100:.1f}%", delta=f"{delta_super:.1f}%")
+                            st.caption(f"Baseado em {stats['qtd_super']} jogos.")
+                        else:
+                            st.warning("Nenhum jogo de Super Time neste período.")
+                    else:
+                        st.info("Esta liga é homogênea (sem Super Times).")
                 
                 st.write("---")
-                for i, row in df.iterrows():
-                    c1, c2, c3, c4 = st.columns([2,4,1,2])
-                    c1.write(f"**{row['data']}**")
-                    c2.write(row['jogo'])
-                    c3.write(f"**{row['gols']}**")
-                    bt = f"b_{row['fixture_id']}"
-                    if c4.button("Odd?", key=bt):
-                        o = get_pinnacle_odd(row['fixture_id'])
-                        if o: c4.success(f"@{o}")
-                        else: c4.warning("N/A")
+                with st.expander("Ver Lista de Jogos Analisados"):
+                    st.dataframe(df_jogos[['data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora', 'total_gols', 'eh_super']])
