@@ -66,12 +66,12 @@ def carregar_dados_consolidados():
         "Portugal - Primeira Liga": {"base": 0.69, "super": 0.89, "times": ["Sporting", "Benfica", "Porto"]},
         "Holanda - Eredivisie": {"base": 0.79, "super": 0.94, "times": ["PSV", "Feyenoord", "Ajax"]},
         "Escócia - Premiership": {"base": 0.72, "super": 0.91, "times": ["Celtic", "Rangers"]},
-        "Alemanha - Bundesliga 1": {"base": 0.81, "super": 0.92, "times": ["Bayern Munich"]},
-        "Espanha - La Liga": {"base": 0.68, "super": 0.85, "times": ["Real Madrid", "Barcelona"]},
+        "Alemanha - Bundesliga 1": {"base": 0.81, "super": 0.92, "times": ["Bayern Munich", "Bayer Leverkusen", "Dortmund", "RB Leipzig"]},
+        "Espanha - La Liga": {"base": 0.68, "super": 0.85, "times": ["Real Madrid", "Barcelona", "Atletico Madrid"]},
         "Inglaterra - Premier League": {"base": 0.76, "super": 0.88, "times": ["Manchester City", "Liverpool", "Arsenal"]},
-        "Itália - Serie A": {"base": 0.74, "super": 0.86, "times": ["Inter", "Atalanta"]},
+        "Itália - Serie A": {"base": 0.74, "super": 0.86, "times": ["Inter", "Atalanta", "Napoli"]},
         "Turquia - Super Lig": {"base": 0.72, "super": 0.89, "times": ["Galatasaray", "Fenerbahce"]},
-        "Áustria - Bundesliga": {"base": 0.78, "super": 0.90, "times": ["Salzburg"]},
+        "Áustria - Bundesliga": {"base": 0.78, "super": 0.90, "times": ["Salzburg", "Sturm Graz"]},
         "França - Ligue 1": {"base": 0.73, "super": 0.88, "times": ["Paris Saint Germain", "PSG"]},
         "Grécia - Super League": {"base": 0.62, "super": 0.81, "times": ["PAOK", "Olympiacos", "AEK"]},
         "Ucrânia - Premier League": {"base": 0.64, "super": 0.82, "times": ["Shakhtar", "Dynamo Kiev"]},
@@ -436,3 +436,59 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
                 
                 if odd_pin and odd_pin > 0:
                     if odd_pin >= odd_gatilho:
+                        apostou = "✅ APOSTA"
+                        if row['over_15']:
+                            lucro = (stake * odd_pin) - stake
+                        else:
+                            lucro = -stake
+                    else:
+                        apostou = "⛔ Baixa"
+                else:
+                    apostou = "⚠️ N/A"
+                    odd_pin = 0
+                
+                odds_fechamento.append(odd_pin)
+                odds_gatilho_lista.append(odd_gatilho)
+                resultados_financeiros.append(lucro)
+                decisao_lista.append(apostou)
+                
+                bar_odds.progress((list(df_final.index).index(i) + 1) / len(df_final))
+            
+            bar_odds.empty()
+            
+            df_final['Odd Pinnacle'] = odds_fechamento
+            df_final['Odd Gatilho'] = odds_gatilho_lista
+            df_final['Decisão'] = decisao_lista
+            df_final['Lucro'] = resultados_financeiros
+            
+            # 3. Exibir Resultados (Com correção do erro KeyError)
+            if not df_final.empty:
+                df_apostas = df_final[df_final['Decisão'] == "✅ APOSTA"].copy()
+                
+                # Resumo
+                if not df_apostas.empty:
+                    df_apostas['Saldo Acumulado'] = df_apostas['Lucro'].cumsum()
+                    lucro_total = df_apostas['Lucro'].sum()
+                    roi = (lucro_total / (len(df_apostas) * stake)) * 100
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Lucro Líquido", f"R$ {lucro_total:.2f}", delta=f"{roi:.1f}% ROI")
+                    c2.metric("Apostas Feitas", len(df_apostas))
+                    c3.metric("Total Jogos Analisados", len(df_final))
+                    
+                    st.line_chart(df_apostas.reset_index()['Saldo Acumulado'])
+                else:
+                    st.warning("Nenhuma oportunidade +EV encontrada neste período.")
+
+                # Tabela Detalhada (Correção do style)
+                st.subheader("📋 Relatório Jogo a Jogo")
+                colunas_view = ['data', 'temporada', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Decisão', 'Lucro']
+                
+                # Uso do .map (compatível com Pandas novos) e verificação de colunas
+                try:
+                    st.dataframe(df_final[colunas_view].style.map(
+                        lambda x: 'color: green' if x > 0 else ('color: red' if x < 0 else 'color: black'), subset=['Lucro']
+                    ))
+                except Exception as e:
+                    # Fallback caso o style falhe
+                    st.dataframe(df_final[colunas_view])
