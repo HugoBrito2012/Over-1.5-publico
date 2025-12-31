@@ -2,19 +2,23 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
+import json
+import os
+from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper Pro: Cluster & API",
-    page_icon="🧬",
-    layout="centered"
+    page_title="Sniper Pro: Quant System",
+    page_icon="🦅",
+    layout="wide" # Layout expandido para melhor visualização
 )
 
 # ==============================================================================
-# 🔐 CONFIGURAÇÕES DE API
+# 🔐 CONFIGURAÇÕES DE API & CACHE
 # ==============================================================================
 API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
 BASE_URL = "https://v3.football.api-sports.io"
+ARQUIVO_CACHE = "cache_odds.json"
 
 # IDs para Monitoramento Live
 LIGAS_API_ID = {
@@ -35,13 +39,28 @@ LIGAS_API_ID = {
     "Bélgica - Pro League": 144
 }
 
-# ==============================================================================
-# 🧠 BANCO DE DADOS HÍBRIDO (CLUSTERS + GERAIS)
-# ==============================================================================
+# --- SISTEMA DE CACHE ---
+def carregar_cache():
+    if os.path.exists(ARQUIVO_CACHE):
+        try:
+            with open(ARQUIVO_CACHE, "r") as f:
+                return json.load(f)
+        except: return {}
+    return {}
 
+def salvar_cache(dados):
+    with open(ARQUIVO_CACHE, "w") as f:
+        json.dump(dados, f)
+
+# Carrega o cache na memória ao iniciar
+cache_odds = carregar_cache()
+
+# ==============================================================================
+# 🧠 BANCO DE DADOS HÍBRIDO
+# ==============================================================================
 @st.cache_data
 def carregar_dados_consolidados():
-    # 1. LIGAS COM CLUSTER
+    # LIGAS COM CLUSTER
     dados_especiais = {
         "Portugal - Primeira Liga": {"base": 0.69, "super": 0.89, "times": ["Sporting", "Benfica", "Porto"]},
         "Holanda - Eredivisie": {"base": 0.79, "super": 0.94, "times": ["PSV", "Feyenoord", "Ajax"]},
@@ -57,8 +76,7 @@ def carregar_dados_consolidados():
         "Ucrânia - Premier League": {"base": 0.64, "super": 0.82, "times": ["Shakhtar", "Dynamo Kiev"]},
         "Rep. Tcheca - 1. Liga": {"base": 0.71, "super": 0.86, "times": ["Sparta Prague", "Slavia Prague"]}
     }
-
-    # 2. LIGAS GERAIS
+    # LIGAS GERAIS
     dados_gerais_lista = {
         "Nova Zelândia - Premiership": 0.92, "Islândia - 1. Deild": 0.89, "Singapura - Premier League": 0.88,
         "Noruega - 1. Divisjon": 0.87, "Suíça - Challenge League": 0.87, "Suíça - Super League": 0.86,
@@ -86,82 +104,88 @@ def carregar_dados_consolidados():
         "Colômbia - Primera B": 0.62, "Egito - Premier League": 0.62, "África do Sul - Premiership": 0.61,
         "Marrocos - Botola Pro": 0.60, "Argentina - Primera B": 0.60, "Irã - Pro League": 0.55
     }
-
-    # FUSÃO
+    # Fusão
     banco_final = dados_especiais.copy()
     for liga, prob in dados_gerais_lista.items():
         if liga not in banco_final:
-            banco_final[liga] = {
-                "base": prob, "super": prob, "times": []
-            }
+            banco_final[liga] = {"base": prob, "super": prob, "times": []}
     return banco_final
 
 dados_completos = carregar_dados_consolidados()
 
 # ==============================================================================
-# 🛠️ LÓGICA DE API DINÂMICA E INTELIGENTE
+# 🛠️ LÓGICA DE API & CACHE
 # ==============================================================================
 
 def get_temporada_atual(league_id):
-    """Busca o ano da temporada marcada como 'corrente' na API."""
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     try:
         r = requests.get(f"{BASE_URL}/leagues", headers=headers, params={'id': league_id, 'current': 'true'}).json()
+        if r['response']: return r['response'][0]['seasons'][0]['year']
+        return None
+    except: return None
+
+def get_pinnacle_odd_historica(fixture_id):
+    """
+    Busca Odd Histórica (Closing Line) da Pinnacle.
+    USA CACHE: Ideal para Backtest e Dados Passados.
+    """
+    str_id = str(fixture_id)
+    # 1. Verifica Cache
+    if str_id in cache_odds:
+        return cache_odds[str_id]
+    
+    # 2. Busca na API
+    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
+    url = f"{BASE_URL}/odds?fixture={fixture_id}&bookmaker=4" 
+    try:
+        r = requests.get(url, headers=headers).json()
+        odd_encontrada = 0
         if r['response']:
-            return r['response'][0]['seasons'][0]['year']
-        return None
-    except:
-        return None
+            bets = r['response'][0]['bookmakers'][0]['bets']
+            for bet in bets:
+                if bet['name'] in ['Goals Over/Under', 'Goals Over/Under - 1st Half']:
+                    for val in bet['values']:
+                        if val['value'] == 'Over 1.5':
+                            odd_encontrada = float(val['odd'])
+                            break
+        # 3. Salva no Cache
+        if odd_encontrada > 0:
+            cache_odds[str_id] = odd_encontrada
+            salvar_cache(cache_odds)
+        return odd_encontrada if odd_encontrada > 0 else None
+    except: return None
 
 def analisar_ultimas_rodadas(league_id, nome_liga):
+    # Lógica de fallback para temporada (Atual -> Anterior)
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
-    
-    # 1. Identificar temporada alvo
     ano_ativo = get_temporada_atual(league_id)
-    if not ano_ativo: ano_ativo = 2025 # Fallback
+    if not ano_ativo: ano_ativo = 2025
     
-    # Variável de controle: Estamos usando a temporada anterior completa?
     usando_temporada_anterior = False
-    
-    # 2. Tentar baixar jogos da temporada ATUAL
     params = {'league': league_id, 'season': ano_ativo, 'status': 'FT'}
     response = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
     
-    # Se a temporada atual estiver vazia (Pré-temporada), buscamos a ANTERIOR
     if not response['response']:
-        ano_ativo = ano_ativo - 1
-        usando_temporada_anterior = True # ATIVA O MODO HISTÓRICO COMPLETO
+        ano_ativo -= 1
+        usando_temporada_anterior = True
         params['season'] = ano_ativo
         response = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
-        
-        if not response['response']:
-            return None, None, f"Sem dados disponíveis para {ano_ativo} ou ano posterior."
+        if not response['response']: return None, None, "Sem dados."
 
     df = pd.json_normalize(response['response'])
+    df = df[['fixture.id', 'fixture.date', 'league.round', 'teams.home.name', 'teams.away.name', 'goals.home', 'goals.away']]
+    df.columns = ['fixture_id', 'data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora']
     
-    # Organização e Limpeza
-    df = df[['fixture.date', 'league.round', 'teams.home.name', 'teams.away.name', 'goals.home', 'goals.away']]
-    df.columns = ['data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora']
-    
-    # Ordenação Cronológica (Do mais recente para o mais antigo)
     df['data'] = pd.to_datetime(df['data'])
     df = df.sort_values('data', ascending=False)
     
-    # Identificar rodadas presentes
     rodadas_presentes = df['rodada'].unique()
+    rodadas_selecionadas = rodadas_presentes if usando_temporada_anterior else rodadas_presentes[:10]
     
-    # --- LÓGICA CRUCIAL DE FILTRAGEM ---
-    if usando_temporada_anterior:
-        # Se estamos na temporada anterior (encerrada), pegamos TODAS as rodadas
-        rodadas_selecionadas = rodadas_presentes
-    else:
-        # Se estamos na temporada atual (em andamento), pegamos apenas as ÚLTIMAS 10
-        rodadas_selecionadas = rodadas_presentes[:10]
-    
-    # Filtra o Dataframe
     df_recorte = df[df['rodada'].isin(rodadas_selecionadas)].copy()
     
-    # Aplica Cluster e Cálculos
+    # Cálculos
     df_recorte['total_gols'] = df_recorte['gols_casa'] + df_recorte['gols_fora']
     df_recorte['over_15'] = df_recorte['total_gols'] >= 2
     
@@ -175,37 +199,32 @@ def analisar_ultimas_rodadas(league_id, nome_liga):
         
     df_recorte['eh_super'] = df_recorte.apply(is_super_game, axis=1)
     
-    # Médias
-    df_base = df_recorte[df_recorte['eh_super'] == False]
-    media_base = df_base['over_15'].mean() if len(df_base) > 0 else 0.0
-    
-    df_super = df_recorte[df_recorte['eh_super'] == True]
-    media_super = df_super['over_15'].mean() if len(df_super) > 0 else 0.0
+    media_base = df_recorte[df_recorte['eh_super'] == False]['over_15'].mean()
+    media_super = df_recorte[df_recorte['eh_super'] == True]['over_15'].mean()
+    if pd.isna(media_base): media_base = 0
+    if pd.isna(media_super): media_super = 0
     
     stats = {
-        "temporada_usada": str(params['season']),
-        "status_temporada": "Anterior (Completa)" if usando_temporada_anterior else "Atual (Em andamento)",
-        "rodadas_analisadas": len(rodadas_selecionadas),
+        "status": "Anterior (Completa)" if usando_temporada_anterior else "Atual (Recente)",
+        "ano": str(ano_ativo),
+        "rodadas": len(rodadas_selecionadas),
         "total_jogos": len(df_recorte),
         "media_base": media_base,
-        "qtd_base": len(df_base),
         "media_super": media_super,
-        "qtd_super": len(df_super),
-        "super_times_lista": super_times
+        "super_times": super_times
     }
     
     return stats, df_recorte, None
 
 # ==============================================================================
-# 📱 INTERFACE DO APLICATIVO
+# 📱 INTERFACE
 # ==============================================================================
 st.sidebar.title("🧰 Menu Sniper")
-modo = st.sidebar.radio("Ferramenta:", ["1. Calculadora Manual", "2. Radar API (Tendência)"])
+modo = st.sidebar.radio("Ferramenta:", ["1. Calculadora Manual", "2. Radar & Backtest"])
 
-# --- MODO 1: CALCULADORA ---
+# --- MODO 1: MANUAL ---
 if modo == "1. Calculadora Manual":
-    st.title("🧪 Calculadora Quant (Histórica)")
-    
+    st.title("🧪 Calculadora Quant")
     lista_ligas = sorted(list(dados_completos.keys()))
     liga_sel = st.selectbox("Selecione a Liga:", lista_ligas)
     info_liga = dados_completos[liga_sel]
@@ -214,21 +233,18 @@ if modo == "1. Calculadora Manual":
     if len(info_liga["times"]) > 0:
         st.info(f"⚡ **Super Times:** {', '.join(info_liga['times'])}")
         tem_super = st.checkbox("🔥 Jogo envolve Super Time?")
-    else:
-        st.write("⚖️ Liga Homogênea.")
+    else: st.write("⚖️ Liga Homogênea.")
     
     prob = info_liga["super"] if tem_super else info_liga["base"]
-    
     if tem_super: st.success(f"Média Turbo: **{prob*100:.1f}%**")
     else: st.markdown(f"Média Base: **{prob*100:.1f}%**")
 
     col1, col2 = st.columns(2)
     with col1: odd = st.number_input("Odd Casa:", 1.01, 10.0, 1.30)
     
-    # Margem
-    if prob < 0.70: margem = 9.0
-    elif "2" in liga_sel or "3" in liga_sel or "Tier" in liga_sel: margem = 6.5
-    else: margem = 5.0
+    if prob < 0.70: margem = 8.0
+    elif "2" in liga_sel or "3" in liga_sel or "Tier" in liga_sel: margem = 6.0
+    else: margem = 4.0
 
     ev = ((prob * odd) - 1) * 100
     gatilho = (1 + (margem/100)) / prob
@@ -243,56 +259,82 @@ if modo == "1. Calculadora Manual":
     elif ev > 0: st.warning(f"⚠️ Valor Baixo (+{ev:.1f}%)")
     else: st.error("❌ NÃO APOSTAR")
 
-# --- MODO 2: RADAR API ---
-elif modo == "2. Radar API (Tendência)":
-    st.title("📡 Radar de Tendência")
-    st.caption("Em Andamento: Últimas 10 Rodadas | Encerrada: Temporada Completa")
+# --- MODO 2: RADAR & BACKTEST ---
+elif modo == "2. Radar & Backtest":
+    st.title("📡 Radar e Backtest Financeiro")
     
     if API_KEY == "SUA_API_KEY_AQUI":
         st.error("⚠️ Configure a API KEY no código.")
     
     liga_api = st.selectbox("Liga para Monitorar:", list(LIGAS_API_ID.keys()))
+    stake_fixa = st.number_input("Valor da Aposta (Unidade) R$:", value=100)
     
-    if st.button("🔄 Buscar Dados da API"):
-        id_liga = LIGAS_API_ID[liga_api]
-        
-        with st.spinner(f"Analisando dados da {liga_api}..."):
-            stats, df_jogos, erro = analisar_ultimas_rodadas(id_liga, liga_api)
-            
-            if erro:
-                st.error(erro)
-            else:
-                hist_base = dados_completos[liga_api]["base"]
-                hist_super = dados_completos[liga_api]["super"]
-                
-                # Exibição do Status da Temporada
-                st.success(f"Análise de {stats['temporada_usada']} ({stats['status_temporada']})")
-                st.info(f"Foram computadas **{stats['rodadas_analisadas']} rodadas** com um total de **{stats['total_jogos']} jogos**.")
-                
-                st.subheader("📊 Diagnóstico Comparativo")
-                col1, col2 = st.columns(2)
-                
-                # Coluna 1: Base
-                with col1:
-                    st.markdown("### 🛡️ Jogos Comuns")
-                    if stats['qtd_base'] > 0:
-                        delta_base = (stats['media_base'] - hist_base) * 100
-                        st.metric("Média Real", f"{stats['media_base']*100:.1f}%", delta=f"{delta_base:.1f}%")
-                        if delta_base < -5: st.error("Tendência: UNDER ⬇️")
-                        elif delta_base > 5: st.success("Tendência: OVER ⬆️")
-                        else: st.info("Dentro da Normalidade")
-                    else: st.warning("Sem dados.")
+    if 'dados_busca' not in st.session_state:
+        st.session_state.dados_busca = None
 
-                # Coluna 2: Super Times
-                with col2:
-                    st.markdown("### 🔥 Super Times")
-                    if len(stats['super_times_lista']) > 0:
-                        if stats['qtd_super'] > 0:
-                            delta_super = (stats['media_super'] - hist_super) * 100
-                            st.metric("Média Real", f"{stats['media_super']*100:.1f}%", delta=f"{delta_super:.1f}%")
-                        else: st.warning("Nenhum jogo no período.")
-                    else: st.info("Liga Homogênea.")
+    if st.button("🔄 1. Analisar Tendência"):
+        id_liga = LIGAS_API_ID[liga_api]
+        with st.spinner("Conectando à API e aplicando Clusters..."):
+            stats, df, erro = analisar_ultimas_rodadas(id_liga, liga_api)
+            if erro: st.error(erro)
+            else: st.session_state.dados_busca = {'stats': stats, 'df': df, 'liga': liga_api}
+
+    if st.session_state.dados_busca and st.session_state.dados_busca['liga'] == liga_api:
+        stats = st.session_state.dados_busca['stats']
+        df = st.session_state.dados_busca['df']
+        hist_base = dados_completos[liga_api]["base"]
+        
+        st.info(f"Análise: {stats['status']} | Rodadas: {stats['rodadas']} | Jogos: {stats['total_jogos']}")
+        
+        c1, c2 = st.columns(2)
+        with c1: st.metric("Média Real (Comuns)", f"{stats['media_base']*100:.1f}%", delta=f"{(stats['media_base']-hist_base)*100:.1f}%")
+        with c2: st.metric("Média Real (Super)", f"{stats['media_super']*100:.1f}%")
+        
+        st.divider()
+        st.subheader("💰 Backtest Financeiro (Com Cache Inteligente)")
+        
+        # Controle de Qtd para Backtest
+        qtd_backtest = st.slider("Quantidade de jogos para Backtest:", 5, 100, 20)
+        
+        if st.button("💸 2. Calcular Lucratividade (ROI)"):
+            df_bt = df.head(qtd_backtest).copy()
+            odds_lista = []
+            saldo_acc = []
+            saldo_atual = 0
+            
+            bar = st.progress(0)
+            
+            for i, row in df_bt.iterrows():
+                # Busca Odd (USA CACHE AUTOMATICAMENTE)
+                odd = get_pinnacle_odd_historica(row['fixture_id'])
+                odds_lista.append(odd if odd else 0)
                 
-                st.write("---")
-                with st.expander("Ver Lista de Jogos"):
-                    st.dataframe(df_jogos[['data', 'rodada', 'casa', 'fora', 'total_gols', 'eh_super']])
+                lucro = 0
+                if odd and odd > 0:
+                    if row['over_15']: lucro = (stake_fixa * odd) - stake_fixa
+                    else: lucro = -stake_fixa
+                
+                saldo_atual += lucro
+                saldo_acc.append(saldo_atual)
+                
+                # Delay mínimo apenas se não estiver no cache (difícil saber aqui, então deixamos rápido)
+                # time.sleep(0.05) 
+                bar.progress((list(df_bt.index).index(i) + 1) / qtd_backtest)
+            
+            bar.empty()
+            df_bt['Odd'] = odds_lista
+            df_bt['Saldo'] = saldo_acc
+            
+            lucro_final = saldo_acc[-1]
+            roi = (lucro_final / (qtd_backtest * stake_fixa)) * 100
+            
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Resultado Financeiro", f"R$ {lucro_final:.2f}", delta=f"{roi:.1f}% ROI")
+            k2.metric("Jogos Analisados", qtd_backtest)
+            k3.metric("Odd Média", f"@{sum(odds_lista)/len([o for o in odds_lista if o>0]):.2f}" if any(odds_lista) else "N/A")
+            
+            if lucro_final > 0: st.success("✅ **LIGA LUCRATIVA!** O padrão histórico compensa.")
+            else: st.error("❌ **LIGA EM PREJUÍZO.** As odds não estão pagando o risco.")
+            
+            st.line_chart(df_bt['Saldo'])
+            st.dataframe(df_bt[['data', 'jogo', 'total_gols', 'Odd', 'Saldo']])
