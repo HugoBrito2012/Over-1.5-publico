@@ -8,7 +8,7 @@ from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper Pro: Sistema Completo",
+    page_title="Sniper Pro: Market Average",
     page_icon="🦅",
     layout="wide"
 )
@@ -16,10 +16,9 @@ st.set_page_config(
 # ==============================================================================
 # 🔐 CONFIGURAÇÕES
 # ==============================================================================
-# Sua chave já está configurada aqui
 API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
 BASE_URL = "https://v3.football.api-sports.io"
-ARQUIVO_CACHE = "cache_odds_v3.json"
+ARQUIVO_CACHE = "cache_odds_avg.json" # Mudamos o nome para não misturar com o cache antigo
 
 # IDs das Ligas
 LIGAS_API_ID = {
@@ -41,7 +40,7 @@ LIGAS_API_ID = {
 }
 
 # ==============================================================================
-# 💾 SISTEMA DE CACHE (ROBUSTO)
+# 💾 SISTEMA DE CACHE
 # ==============================================================================
 def carregar_cache():
     if os.path.exists(ARQUIVO_CACHE):
@@ -115,31 +114,40 @@ def carregar_dados_consolidados():
 dados_completos = carregar_dados_consolidados()
 
 # ==============================================================================
-# 🛠️ CORE: FUNÇÕES DE API
+# 🛠️ CORE: API (ODDS MÉDIA DO MERCADO)
 # ==============================================================================
 
-def get_pinnacle_odd_historica(fixture_id):
-    """ Busca odd no Cache ou API (Bookmaker 4 = Pinnacle) """
+def get_market_average_odd(fixture_id):
+    """ 
+    Busca a MÉDIA das odds de Over 1.5 de TODOS os bookmakers disponíveis.
+    """
     str_id = str(fixture_id)
     if str_id in cache_odds: return cache_odds[str_id]
     
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
+    
+    # Removemos o filtro '&bookmaker=4' para pegar todos
+    url = f"{BASE_URL}/odds?fixture={fixture_id}"
+    
     try:
-        r = requests.get(f"{BASE_URL}/odds?fixture={fixture_id}&bookmaker=4", headers=headers).json()
-        odd = 0
-        if r['response']:
-            bets = r['response'][0]['bookmakers'][0]['bets']
-            for bet in bets:
-                if bet['name'] in ['Goals Over/Under', 'Goals Over/Under - 1st Half']:
-                    for val in bet['values']:
-                        if val['value'] == 'Over 1.5':
-                            odd = float(val['odd'])
-                            break
+        r = requests.get(url, headers=headers).json()
+        odds_encontradas = []
         
-        if odd > 0:
-            cache_odds[str_id] = odd
+        if r['response']:
+            # Itera sobre todos os bookmakers (Bet365, Pinnacle, 1xBet, etc)
+            bookmakers = r['response'][0]['bookmakers']
+            for bookie in bookmakers:
+                for bet in bookie['bets']:
+                    if bet['name'] in ['Goals Over/Under', 'Goals Over/Under - 1st Half']:
+                        for val in bet['values']:
+                            if val['value'] == 'Over 1.5':
+                                odds_encontradas.append(float(val['odd']))
+        
+        if len(odds_encontradas) > 0:
+            media = sum(odds_encontradas) / len(odds_encontradas)
+            cache_odds[str_id] = media
             salvar_cache(cache_odds)
-            return odd
+            return media
         else:
             return None
     except: return None
@@ -149,22 +157,18 @@ def get_temporada_atual(league_id):
     try:
         r = requests.get(f"{BASE_URL}/leagues", headers=headers, params={'id': league_id, 'current': 'true'}).json()
         if r['response']: return r['response'][0]['seasons'][0]['year']
-        return 2024 # Fallback
+        return 2024
     except: return 2024
 
 def analisar_ultimas_rodadas(league_id, nome_liga):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     
-    # 1. Identificar Temporada
     ano_ativo = get_temporada_atual(league_id)
-    
     usando_temporada_anterior = False
     
-    # 2. Baixar jogos
     params = {'league': league_id, 'season': ano_ativo, 'status': 'FT'}
     response = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
     
-    # Se vazio, tenta anterior
     if not response['response']:
         ano_ativo -= 1
         usando_temporada_anterior = True
@@ -176,10 +180,8 @@ def analisar_ultimas_rodadas(league_id, nome_liga):
     df = df[['fixture.id', 'fixture.date', 'league.round', 'teams.home.name', 'teams.away.name', 'goals.home', 'goals.away']]
     df.columns = ['fixture_id', 'data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora']
     
-    # --- CORREÇÃO KEYERROR: CRIAR COLUNA JOGO ---
     df['jogo'] = df['casa'] + " x " + df['fora']
 
-    # 3. Ordenação e Filtro
     df['data'] = pd.to_datetime(df['data'])
     df = df.sort_values('data', ascending=False)
     
@@ -188,11 +190,9 @@ def analisar_ultimas_rodadas(league_id, nome_liga):
     
     df_recorte = df[df['rodada'].isin(rodadas_selecionadas)].copy()
     
-    # 4. Dados Básicos
     df_recorte['total_gols'] = df_recorte['gols_casa'] + df_recorte['gols_fora']
     df_recorte['over_15'] = df_recorte['total_gols'] >= 2
     
-    # Cluster
     info_liga = dados_completos.get(nome_liga, {"times": []})
     super_times = info_liga["times"]
     
@@ -244,7 +244,7 @@ def executar_backtest_multitemporada(league_id, nome_liga, anos_para_analisar=5)
                         'temporada': ano,
                         'casa': jogo['teams']['home']['name'],
                         'fora': jogo['teams']['away']['name'],
-                        'jogo': f"{jogo['teams']['home']['name']} x {jogo['teams']['away']['name']}", # --- CORREÇÃO KEYERROR ---
+                        'jogo': f"{jogo['teams']['home']['name']} x {jogo['teams']['away']['name']}",
                         'gols_casa': jogo['goals']['home'],
                         'gols_fora': jogo['goals']['away'],
                         'total_gols': gols,
@@ -285,7 +285,7 @@ modo = st.sidebar.radio("Modo:", [
 ])
 
 # ------------------------------------------------------------------------------
-# MODO 1: CALCULADORA MANUAL
+# MODO 1: CALCULADORA MANUAL (ATUALIZADA)
 # ------------------------------------------------------------------------------
 if modo == "1. Calculadora Manual":
     st.title("🧪 Calculadora Quant (Histórica)")
@@ -294,23 +294,34 @@ if modo == "1. Calculadora Manual":
     liga_sel = st.selectbox("Selecione a Liga:", lista_ligas)
     info_liga = dados_completos[liga_sel]
     
+    # 1. Definição Automática da Margem
+    if info_liga['base'] < 0.70: 
+        margem = 9.0
+        cluster_nome = "BRONZE / UNDER"
+    elif "2" in liga_sel or "3" in liga_sel or "Tier" in liga_sel: 
+        margem = 6.5
+        cluster_nome = "TIER INFERIOR (Volátil)"
+    else: 
+        margem = 5.0
+        cluster_nome = "OURO / PRINCIPAL"
+
     tem_super = False
     if len(info_liga["times"]) > 0:
         st.info(f"⚡ **Super Times:** {', '.join(info_liga['times'])}")
         tem_super = st.checkbox("🔥 Jogo envolve Super Time?")
-    else: st.write("⚖️ Liga Homogênea.")
+    else: 
+        st.write("⚖️ Liga Homogênea (Média única).")
     
     prob = info_liga["super"] if tem_super else info_liga["base"]
     
+    # Display Visual
+    st.markdown(f"**Grupo:** {cluster_nome} | **Margem Mínima:** {margem}%")
+
     if tem_super: st.success(f"Média Turbo: **{prob*100:.1f}%**")
     else: st.markdown(f"Média Base: **{prob*100:.1f}%**")
 
     col1, col2 = st.columns(2)
     with col1: odd = st.number_input("Odd Casa:", 1.01, 10.0, 1.30)
-    
-    if prob < 0.70: margem = 9.0
-    elif "2" in liga_sel or "3" in liga_sel or "Tier" in liga_sel: margem = 6.5
-    else: margem = 5
 
     ev = ((prob * odd) - 1) * 100
     gatilho = (1 + (margem/100)) / prob
@@ -321,21 +332,22 @@ if modo == "1. Calculadora Manual":
     c2.metric("Fair", f"@{1/prob:.2f}")
     c3.metric("Gatilho", f"@{gatilho:.2f}", delta_color="inverse")
     
-    if ev >= margem: st.success(f"✅ APOSTAR! (+{ev:.1f}%)")
+    # 2. Correção Lógica de Aposta
+    if odd >= gatilho: st.success(f"✅ APOSTAR! (+{ev:.1f}%)")
     else: st.error("❌ NÃO APOSTAR")
 
 # ------------------------------------------------------------------------------
 # MODO 2: RADAR DE TENDÊNCIA
 # ------------------------------------------------------------------------------
 elif modo == "2. Radar de Tendência (Temporada Atual)":
-    st.title("📡 Radar de Tendência + Odds")
-    st.caption("Analisa a temporada atual (ou última encerrada) e verifica se as odds ofereceram valor.")
+    st.title("📡 Radar de Tendência + Odds Média")
+    st.caption("Analisa a temporada atual e verifica odds médias do mercado.")
 
     liga_api = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
     
     if st.button("🔄 Analisar Tendência"):
         id_liga = LIGAS_API_ID[liga_api]
-        with st.spinner("Buscando jogos recentes e odds..."):
+        with st.spinner("Buscando jogos recentes e calculando média do mercado..."):
             stats, df, erro = analisar_ultimas_rodadas(id_liga, liga_api)
             
             if erro:
@@ -355,13 +367,12 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 stake = 100 
                 
                 for i, row in df.iterrows():
-                    # 1. Odd
-                    odd = get_pinnacle_odd_historica(row['fixture_id'])
+                    # 1. Odd (MÉDIA DE TODOS OS BOOKMAKERS)
+                    odd = get_market_average_odd(row['fixture_id'])
                     
                     # 2. Gatilho
                     prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
                     
-                    # Regra Margem
                     if prob_ref < 0.70: margem = 0.09
                     elif "2" in liga_api or "3" in liga_api: margem = 0.065
                     else: margem = 0.05
@@ -388,24 +399,28 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                     bar_radar.progress((list(df.index).index(i) + 1) / len(df))
                 
                 bar_radar.empty()
-                df['Odd Pinnacle'] = odds_lista
+                df['Odd Média'] = odds_lista
                 df['Odd Gatilho'] = gatilho_lista
                 df['Veredito'] = decisao_lista
                 df['Simul. R$'] = lucro_lista
                 
                 # Exibição
-                col_v = ['data', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Veredito', 'Simul. R$']
+                col_v = ['data', 'jogo', 'total_gols', 'Odd Média', 'Odd Gatilho', 'Veredito', 'Simul. R$']
                 
-                st.dataframe(df[col_v])
+                try:
+                    st.dataframe(df[col_v].style.map(
+                        lambda x: 'color: green; font-weight: bold' if x == "✅ APOSTA" else ('color: red' if x == "⛔ Baixo Valor" else 'color: gray'), subset=['Veredito']
+                    ))
+                except:
+                    st.dataframe(df[col_v])
 
 # ------------------------------------------------------------------------------
 # MODO 3: BACKTEST PROFUNDO
 # ------------------------------------------------------------------------------
 elif modo == "3. Deep Backtest (5 Temporadas)":
     st.title("📚 Backtest Profundo (+EV)")
-    st.markdown("Simula apostas apenas quando há Valor Esperado positivo.")
+    st.markdown("Simula apostas usando a **Média do Mercado**.")
     
-    # --- CORREÇÃO API KEY CHECK ---
     if API_KEY == "SUA_API_KEY_AQUI":
         st.error("⚠️ Configure a API KEY no código.")
     
@@ -427,7 +442,7 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             st.error(erro)
         else:
             df_final = df.head(limite_jogos).copy()
-            st.info(f"Jogos mapeados: {len(df_final)}. Buscando Odds...")
+            st.info(f"Jogos mapeados: {len(df_final)}. Calculando Média de Odds...")
             
             # 2. Buscar Odds e Calcular
             resultados_financeiros = []
@@ -441,8 +456,9 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             odds_encontradas_cnt = 0
             
             for i, row in df_final.iterrows():
-                odd_pin = get_pinnacle_odd_historica(row['fixture_id'])
-                if odd_pin: odds_encontradas_cnt += 1
+                # --- MUDANÇA: PEGA MÉDIA DO MERCADO AO INVÉS DE SÓ PINNACLE ---
+                odd_avg = get_market_average_odd(row['fixture_id'])
+                if odd_avg: odds_encontradas_cnt += 1
                 
                 prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
                 
@@ -455,21 +471,20 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
                 lucro = 0
                 apostou = "Ignorada"
                 
-                if odd_pin and odd_pin > 0:
-                    if odd_pin >= odd_gatilho:
+                if odd_avg and odd_avg > 0:
+                    if odd_avg >= odd_gatilho:
                         apostou = "✅ APOSTA"
                         if row['over_15']:
-                            lucro = (stake * odd_pin) - stake
+                            lucro = (stake * odd_avg) - stake
                         else:
                             lucro = -stake
                     else:
                         apostou = "⛔ Baixa"
                 else:
                     apostou = "⚠️ N/A"
-                    odd_pin = 0
+                    odd_avg = 0
                 
-                # GARANTE O TAMANHO DAS LISTAS
-                odds_fechamento.append(odd_pin)
+                odds_fechamento.append(odd_avg)
                 odds_gatilho_lista.append(odd_gatilho)
                 resultados_financeiros.append(lucro)
                 decisao_lista.append(apostou)
@@ -478,12 +493,12 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             
             bar_odds.empty()
             
-            # 3. Diagnóstico de API
-            st.caption(f"Diagnóstico de Dados: Odds recuperadas para {odds_encontradas_cnt} de {len(df_final)} jogos.")
+            # 3. Diagnóstico
+            st.caption(f"Diagnóstico: Odds médias recuperadas para {odds_encontradas_cnt} de {len(df_final)} jogos.")
             if odds_encontradas_cnt == 0:
-                st.error("ERRO CRÍTICO: A API não retornou odds da Pinnacle (ID 4) para nenhum jogo. Tente outra liga europeia para testar.")
+                st.error("ERRO CRÍTICO: Não foi possível obter odds de nenhum bookmaker.")
             
-            df_final['Odd Pinnacle'] = odds_fechamento
+            df_final['Odd Média'] = odds_fechamento
             df_final['Odd Gatilho'] = odds_gatilho_lista
             df_final['Decisão'] = decisao_lista
             df_final['Lucro'] = resultados_financeiros
@@ -508,7 +523,7 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
 
                 # Tabela Detalhada
                 st.subheader("📋 Relatório Jogo a Jogo")
-                colunas_view = ['data', 'temporada', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Decisão', 'Lucro']
+                colunas_view = ['data', 'temporada', 'jogo', 'total_gols', 'Odd Média', 'Odd Gatilho', 'Decisão', 'Lucro']
                 
                 with st.expander("Ver Tabela de Dados Completa"):
                     try:
