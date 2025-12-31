@@ -8,8 +8,8 @@ from io import StringIO
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper Pro: Cluster Elite",
-    page_icon="🎯",
+    page_title="Sniper Pro: V16 (Robust)",
+    page_icon="🦅",
     layout="wide"
 )
 
@@ -19,54 +19,29 @@ st.set_page_config(
 API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
 BASE_URL = "https://v3.football.api-sports.io"
 
-# MAPEAMENTO EXATO (Nomes iguais ao do Banco de Dados)
+# Mapeamento para o Radar
 LIGAS_API_ID = {
     "Brasil - Série A": 71, "Brasil - Série B": 72, "Brasil - Série C": 75,
-    "Argentina - Liga Profesional": 128, "Argentina - Primera B": 130,
-    "Colômbia - Primera A": 239, "Colômbia - Primera B": 240,
-    "Chile - Primera Division": 265, "Uruguai - Primera Division": 271,
-    "Paraguai - Primera Division": 250, "Peru - Liga 1": 281,
-    "Equador - Liga Pro": 242, "Bolívia - Primera Division": 244,
-    "Venezuela - Primera Division": 299,
     "Inglaterra - Premier League": 39, "Inglaterra - Championship": 40,
-    "Inglaterra - League One": 41, "Inglaterra - League Two": 42,
     "Espanha - La Liga": 140, "Espanha - La Liga 2": 141,
-    "Alemanha - Bundesliga 1": 78, "Alemanha - Bundesliga 2": 79, "Alemanha - 3. Liga": 80,
+    "Alemanha - Bundesliga 1": 78, "Alemanha - Bundesliga 2": 79,
     "Itália - Serie A": 135, "Itália - Serie B": 136,
-    "França - Ligue 1": 61, "França - Ligue 2": 62, "França - National": 63,
-    "Portugal - Primeira Liga": 94, "Portugal - Liga 2": 95,
-    "Holanda - Eredivisie": 88, "Holanda - Eerste Divisie": 89,
-    "Bélgica - Pro League": 144, "Bélgica - Challenger": 145,
-    "Turquia - Super Lig": 203, "Turquia - 1. Lig": 204,
-    "Escócia - Premiership": 179, "Escócia - Championship": 180,
-    "Áustria - Bundesliga": 218, "Áustria - 2. Liga": 219,
-    "Suíça - Super League": 207, "Suíça - Challenge": 208,
-    "Grécia - Super League": 197, "Rússia - Premier League": 235,
-    "Ucrânia - Premier League": 333, "Rep. Tcheca - 1. Liga": 345,
-    "Croácia - HNL": 210, "Polônia - Ekstraklasa": 106,
-    "Romênia - Liga 1": 283, "Sérvia - SuperLiga": 286,
-    "Hungria - NB I": 271, "Bulgária - First League": 172,
-    "Eslováquia - Super Liga": 332,
-    "Noruega - Eliteserien": 103, "Noruega - 1. Divisjon": 104,
-    "Suécia - Allsvenskan": 113, "Suécia - Superettan": 114,
-    "Dinamarca - Superliga": 119, "Dinamarca - 1. Division": 120,
-    "Islândia - Urvalsdeild": 162, "Finlândia - Veikkausliiga": 248,
-    "EUA - MLS": 253, "EUA - USL": 255, "Costa Rica - Primera": 165,
-    "México - Liga MX": 262, 
-    "Japão - J-League 1": 98, "Japão - J-League 2": 99,
-    "Coreia do Sul - K1": 292, "Coreia do Sul - K2": 293,
-    "China - Super League": 169, "Austrália - A-League": 188,
-    "Arábia Saudita - Pro": 307, "Catar - Stars": 301,
-    "EAU - Pro League": 304, "Irã - Pro League": 290,
-    "Egito - Premier": 233, "África do Sul - Premiership": 288
+    "França - Ligue 1": 61, "França - Ligue 2": 62,
+    "Portugal - Primeira Liga": 94, "Holanda - Eredivisie": 88,
+    "Bélgica - Pro League": 144, "Turquia - Super Lig": 203,
+    "Escócia - Premiership": 179, "Áustria - Bundesliga": 218,
+    "Suíça - Super League": 207, "Noruega - Eliteserien": 103,
+    "Suécia - Allsvenskan": 113, "Dinamarca - Superliga": 119,
+    "EUA - MLS": 253, "Japão - J-League 1": 98,
+    "Argentina - Liga Profesional": 128
 }
 
 # ==============================================================================
-# 🧠 BANCO DE DADOS CALIBRADO (CLUSTERS REAIS)
+# 🧠 DADOS CALIBRADOS (CLUSTERS REAIS V15)
 # ==============================================================================
 @st.cache_data
 def carregar_dados_o25():
-    # Dados extraídos do Calibrador Cluster Total
+    # Dados exatos da sua última calibração via API
     return {
         "Brasil - Série A": {"base": 0.443, "super": 0.443, "piso": 0.395, "times": []},
         "Brasil - Série B": {"base": 0.371, "super": 0.371, "piso": 0.326, "times": []},
@@ -150,42 +125,41 @@ def carregar_dados_o25():
 dados_completos = carregar_dados_o25()
 
 # ==============================================================================
-# 🧠 CÁLCULO DE MARGEM DINÂMICA
+# 🧠 CÁLCULO DE MARGEM DINÂMICA (Baseada no V15)
 # ==============================================================================
 def calcular_margem_dinamica(base, piso):
     """
-    Calcula o EV (Margem) necessário baseado na Confiabilidade da Liga.
-    Quanto menor a probabilidade ou maior a variação (Risco), maior a margem.
+    Adapta a margem de segurança.
+    Ligas Under e Instáveis pagam um pedágio maior (Margem maior).
     """
     variacao = base - piso
     margem_base = 0.05 # Começa com 5%
     
     # 1. Penalidade por Baixa Probabilidade (Under)
-    if base < 0.45: margem_base += 0.08 # +8% (Total 13%)
-    elif base < 0.50: margem_base += 0.05 # +5% (Total 10%)
+    if base < 0.45: margem_base += 0.08 # +8%
+    elif base < 0.50: margem_base += 0.05 # +5%
     
     # 2. Penalidade por Instabilidade (Volatilidade)
     risco_texto = "Estável"
     if variacao > 0.15: 
-        margem_base += 0.08 # Liga muito louca -> +8%
+        margem_base += 0.08 
         risco_texto = "⛔ ALTA VOLATILIDADE"
     elif variacao > 0.10:
-        margem_base += 0.04 # Liga instável -> +4%
+        margem_base += 0.04
         risco_texto = "⚠️ Instável"
     elif variacao > 0.05:
-        margem_base += 0.01 # Leve variação -> +1%
+        margem_base += 0.01 
     
     return margem_base, risco_texto
 
 # ==============================================================================
-# 🔌 RADAR API
+# 🔌 API DO RADAR (Simplificada)
 # ==============================================================================
-def get_odd_radar(fixture_id):
-    # Busca Odd Over 2.5 na API para o Radar
+def get_average_odd_o25_api(fixture_id):
     url = f"{BASE_URL}/odds?fixture={fixture_id}"
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     try:
-        r = requests.get(url, headers=headers, timeout=5).json()
+        r = requests.get(url, headers=headers).json()
         if r['response']:
             odds = []
             for b in r['response'][0]['bookmakers']:
@@ -197,18 +171,17 @@ def get_odd_radar(fixture_id):
     except: pass
     return 0
 
-def processar_radar(league_id, nome_liga):
+def analisar_radar_api(league_id, nome_liga):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
-    
     try:
         r = requests.get(f"{BASE_URL}/leagues", headers=headers, params={'id': league_id, 'current': 'true'}).json()
         ano = r['response'][0]['seasons'][0]['year']
     except: ano = 2024
-
+    
     params = {'league': league_id, 'season': ano, 'status': 'FT'}
     resp = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params).json()
     
-    if not resp['response']: return None, "Sem jogos."
+    if not resp['response']: return None, "Sem jogos recentes."
     
     df = pd.json_normalize(resp['response'])
     df = df[['fixture.id', 'fixture.date', 'teams.home.name', 'teams.away.name', 'goals.home', 'goals.away']]
@@ -222,15 +195,12 @@ def processar_radar(league_id, nome_liga):
     
     info_liga = dados_completos.get(nome_liga, {"base": 0.5, "piso": 0.4, "super": 0.5, "times": []})
     
-    odds = []
-    decisoes = []
-    gats = []
-    
+    odds, gats, decisoes = [], [], []
     bar = st.progress(0)
+    
     for i, row in df.iterrows():
-        odd = get_odd_radar(row['id'])
+        odd = get_average_odd_o25_api(row['id'])
         
-        # Check Super Time
         eh_super = False
         for t in info_liga['times']:
             if t in row['casa'] or t in row['fora']: eh_super = True
@@ -243,94 +213,106 @@ def processar_radar(league_id, nome_liga):
         if odd > 0:
             if odd >= gatilho: res = "✅ APOSTA"
             else: res = "⛔ Baixa"
-            
+        
         odds.append(odd)
-        decisoes.append(res)
         gats.append(gatilho)
+        decisoes.append(res)
         time.sleep(0.1)
         bar.progress((list(df.index).index(i) + 1) / len(df))
         
     df['Odd'] = odds
-    df['Decisão'] = decisoes
     df['Gatilho'] = gats
+    df['Decisão'] = decisoes
     
-    return df, f"Margem aplicada: {margem*100:.1f}%"
+    return df, None
 
 # ==============================================================================
-# 💾 BACKTEST CSV
+# 💾 PROCESSADOR DE CSV V16 (MECANISMO ROBUSTO DO V12)
 # ==============================================================================
-def processar_backtest(file, nome_liga, stake):
+def processar_csv_robust(file, nome_liga_selecionada, col_home, col_away, col_hg, col_ag, col_odd, stake):
     try:
-        df = pd.read_csv(file, encoding='latin1')
-        info_liga = dados_completos.get(nome_liga, {"base": 0.5, "piso": 0.4, "super": 0.5, "times": []})
+        # Tenta decodificar de várias formas para evitar erro
+        try:
+            df = pd.read_csv(file)
+        except:
+            file.seek(0)
+            df = pd.read_csv(file, encoding='latin1')
+            
+        # Mapeamento dinâmico
+        mapeamento = {
+            col_home: 'Casa',
+            col_away: 'Fora',
+            col_hg: 'GolsCasa',
+            col_ag: 'GolsFora',
+            col_odd: 'Odd'
+        }
+        df = df.rename(columns=mapeamento)
         
-        cols = list(df.columns)
-        col_odd = None
-        for c in ['Avg>2.5', 'PC>2.5', 'B365>2.5', 'Max>2.5']:
-            if c in cols: 
-                col_odd = c
+        # Data
+        for c in ['Date', 'date', 'DATA']:
+            if c in df.columns:
+                df['Data'] = pd.to_datetime(df[c], dayfirst=True, errors='coerce')
                 break
+        if 'Data' not in df.columns: df['Data'] = "N/A"
         
-        if not col_odd: return None, "Coluna de Odd Over 2.5 não encontrada."
+        # Cálculos O2.5
+        df['TotalGols'] = df['GolsCasa'] + df['GolsFora']
+        df['Over2.5'] = df['TotalGols'] >= 3
         
-        # Mapeamento
-        mapa = {}
-        if 'HomeTeam' in cols: mapa['HomeTeam'] = 'Casa'
-        elif 'Home' in cols: mapa['Home'] = 'Casa'
-        if 'AwayTeam' in cols: mapa['AwayTeam'] = 'Fora'
-        elif 'Away' in cols: mapa['Away'] = 'Fora'
-        if 'FTHG' in cols: mapa['FTHG'] = 'HG'
-        if 'FTAG' in cols: mapa['FTAG'] = 'AG'
+        # Dados da Liga
+        info_liga = dados_completos.get(nome_liga_selecionada, {"base": 0.5, "super": 0.5, "piso": 0.4, "times": []})
         
-        df = df.rename(columns=mapa)
-        df['Total'] = df['HG'] + df['AG']
-        df['Over25'] = df['Total'] >= 3
-        
-        lucros, res, gats = [], [], []
+        gats, lucros, res = [], [], []
         
         for i, row in df.iterrows():
-            odd = pd.to_numeric(row[col_odd], errors='coerce')
-            
-            # Check Super
+            # Check Cluster
             eh_super = False
             for t in info_liga['times']:
-                if str(t) in str(row['Casa']) or str(t) in str(row['Fora']): eh_super = True
+                if str(t).lower() in str(row['Casa']).lower() or str(t).lower() in str(row['Fora']).lower():
+                    eh_super = True
             
             prob = info_liga['super'] if eh_super else info_liga['base']
             margem, _ = calcular_margem_dinamica(prob, info_liga['piso'])
             gatilho = (1 + margem) / prob
             
-            luc = 0
-            dec = "Ignorada"
+            odd_row = pd.to_numeric(row['Odd'], errors='coerce')
             
-            if odd > 0 and odd >= gatilho:
-                dec = "✅ APOSTA"
-                if row['Over25']: luc = (stake * odd) - stake
-                else: luc = -stake
+            lucro = 0
+            decisao = "Ignorada"
             
-            lucros.append(luc)
-            res.append(dec)
+            if odd_row > 0 and odd_row >= gatilho:
+                decisao = "✅ APOSTA"
+                if row['Over2.5']: lucro = (stake * odd_row) - stake
+                else: lucro = -stake
+            
             gats.append(gatilho)
+            lucros.append(lucro)
+            res.append(decisao)
             
+        df['Gatilho'] = gats
         df['Lucro'] = lucros
         df['Decisão'] = res
-        df['Gatilho'] = gats
         
-        return df, "Processado com Cluster Elite."
+        return df
         
     except Exception as e:
-        return None, str(e)
+        st.error(f"Erro ao processar CSV: {e}")
+        return None
 
 # ==============================================================================
 # 🖥️ INTERFACE
 # ==============================================================================
-st.sidebar.title("🧰 Sniper Pro V15")
-modo = st.sidebar.radio("Ferramenta:", ["1. Calculadora Cluster", "2. Radar Tendência", "3. Backtest CSV"])
+st.sidebar.title("🧰 Sniper V16 (Robust)")
+modo = st.sidebar.radio("Modo:", [
+    "1. Calculadora Manual", 
+    "2. Radar API (Hoje/Futuro)", 
+    "3. Backtest CSV (Histórico)"
+])
 
-if modo == "1. Calculadora Cluster":
-    st.title("🧪 Calculadora Elite (Over 2.5)")
-    liga = st.selectbox("Liga:", sorted(list(dados_completos.keys())))
-    stats = dados_completos[liga]
+if modo == "1. Calculadora Manual":
+    st.title("🧪 Calculadora Elite O2.5")
+    liga_sel = st.selectbox("Liga:", sorted(list(dados_completos.keys())))
+    stats = dados_completos[liga_sel]
     
     tem_super = False
     if stats['times']:
@@ -341,45 +323,84 @@ if modo == "1. Calculadora Cluster":
     margem, risco = calcular_margem_dinamica(prob, stats['piso'])
     gatilho = (1 + margem) / prob
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Probabilidade Real", f"{prob*100:.1f}%")
-        st.caption(f"Margem: {margem*100:.1f}% ({risco})")
-    with col2:
-        st.metric("ODD GATILHO", f"@{gatilho:.2f}")
+    c1, c2 = st.columns(2)
+    c1.metric("Probabilidade", f"{prob*100:.1f}%")
+    c2.metric("Gatilho", f"@{gatilho:.2f}")
+    st.caption(f"Margem: {margem*100:.1f}% ({risco})")
     
-    odd_input = st.number_input("Odd Oferecida:", 1.01, 10.0, 1.80)
-    if odd_input >= gatilho: st.success("✅ APOSTA DE VALOR")
+    odd = st.number_input("Odd Oferecida:", 1.0, 10.0, 1.80)
+    if odd >= gatilho: st.success("✅ VALOR")
     else: st.error("❌ SEM VALOR")
 
-elif modo == "2. Radar Tendência":
-    st.title("📡 Radar de Mercado")
-    liga = st.selectbox("Liga:", sorted(list(LIGAS_API_ID.keys())))
-    if st.button("Buscar"):
-        df, info = processar_radar(LIGAS_API_ID[liga], liga)
-        if df is not None:
+elif modo == "2. Radar API (Hoje/Futuro)":
+    st.title("📡 Radar de Tendência")
+    liga_sel = st.selectbox("Liga:", list(LIGAS_API_ID.keys()))
+    if st.button("Buscar Jogos"):
+        df, erro = analisar_radar_api(LIGAS_API_ID[liga_sel], liga_sel)
+        if erro: st.error(erro)
+        else:
             st.dataframe(df[['data', 'jogo', 'total', 'over25', 'Odd', 'Gatilho', 'Decisão']].style.map(
                 lambda x: 'color: green' if x == "✅ APOSTA" else 'color: black', subset=['Decisão']
             ))
-        else: st.error(info)
 
-elif modo == "3. Backtest CSV":
-    st.title("📚 Backtest Histórico")
-    liga = st.selectbox("Liga do CSV:", sorted(list(dados_completos.keys())))
-    stake = st.number_input("Stake:", value=100)
-    file = st.file_uploader("CSV:", type=["csv"])
-    if file and st.button("Processar"):
-        df, info = processar_backtest(file, liga, stake)
-        if df is not None:
-            apostas = df[df['Decisão'] == "✅ APOSTA"]
-            lucro = apostas['Lucro'].sum()
-            roi = (lucro / (len(apostas)*stake))*100 if len(apostas) > 0 else 0
+elif modo == "3. Backtest CSV (Histórico)":
+    st.title("📚 Backtest Robusto (CSV)")
+    
+    liga_ref = st.selectbox("Liga do Arquivo:", sorted(list(dados_completos.keys())))
+    stake = st.number_input("Stake R$:", value=100)
+    uploaded_file = st.file_uploader("Arquivo CSV:", type=["csv"])
+    
+    if uploaded_file is not None:
+        st.write("---")
+        # Pré-leitura para pegar colunas
+        try:
+            preview = pd.read_csv(uploaded_file)
+        except:
+            uploaded_file.seek(0)
+            preview = pd.read_csv(uploaded_file, encoding='latin1')
             
-            c1, c2 = st.columns(2)
-            c1.metric("Lucro", f"R$ {lucro:.2f}", delta=f"{roi:.1f}% ROI")
-            c2.metric("Apostas", len(apostas))
+        cols = list(preview.columns)
+        
+        # Auto-detecção inteligente (V12 Style)
+        def find_col(options, default_idx):
+            for opt in options:
+                if opt in cols: return opt
+            return cols[default_idx] if len(cols) > default_idx else ""
+
+        c1, c2 = st.columns(2)
+        col_home = c1.selectbox("Time Casa:", cols, index=cols.index(find_col(['HomeTeam', 'Home'], 0)))
+        col_away = c2.selectbox("Time Fora:", cols, index=cols.index(find_col(['AwayTeam', 'Away'], 1)))
+        
+        c3, c4 = st.columns(2)
+        col_hg = c3.selectbox("Gols Casa:", cols, index=cols.index(find_col(['FTHG', 'HG'], 2)))
+        col_ag = c4.selectbox("Gols Fora:", cols, index=cols.index(find_col(['FTAG', 'AG'], 3)))
+        
+        # Odd O2.5
+        idx_odd = 0
+        possiveis = ['Avg>2.5', 'PC>2.5', 'B365>2.5', 'Max>2.5']
+        for p in possiveis:
+            if p in cols: 
+                idx_odd = cols.index(p)
+                break
+        col_odd = st.selectbox("Odd Over 2.5:", cols, index=idx_odd)
+        
+        if st.button("🚀 PROCESSAR"):
+            uploaded_file.seek(0)
+            df_result = processar_csv_robust(uploaded_file, liga_ref, col_home, col_away, col_hg, col_ag, col_odd, stake)
             
-            if not apostas.empty:
-                st.line_chart(apostas['Lucro'].cumsum().reset_index(drop=True))
-                st.dataframe(df[['Data', 'Casa', 'Fora', 'Total', 'Odd', 'Gatilho', 'Decisão', 'Lucro']])
-        else: st.error(info)
+            if df_result is not None:
+                apostas = df_result[df_result['Decisão'] == "✅ APOSTA"]
+                lucro = apostas['Lucro'].sum()
+                roi = (lucro / (len(apostas)*stake))*100 if len(apostas) > 0 else 0
+                
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Lucro Final", f"R$ {lucro:.2f}", delta=f"{roi:.1f}% ROI")
+                m2.metric("Jogos", len(df_result))
+                m3.metric("Apostas", len(apostas))
+                
+                if not apostas.empty:
+                    st.line_chart(apostas['Lucro'].cumsum().reset_index(drop=True))
+                
+                st.dataframe(df_result[['Data', 'Casa', 'Fora', 'TotalGols', 'Over2.5', 'Odd', 'Gatilho', 'Decisão', 'Lucro']].style.map(
+                    lambda x: 'color: green' if x > 0 else ('color: red' if x < 0 else 'color: black'), subset=['Lucro']
+                ))
