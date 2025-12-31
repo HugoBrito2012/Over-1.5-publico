@@ -8,7 +8,7 @@ from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Sniper Pro: Full Suite",
+    page_title="Sniper Pro: Sistema Completo",
     page_icon="🦅",
     layout="wide"
 )
@@ -16,9 +16,10 @@ st.set_page_config(
 # ==============================================================================
 # 🔐 CONFIGURAÇÕES
 # ==============================================================================
+# ⚠️ INSIRA SUA CHAVE DA API ABAIXO
 API_KEY = "5b60f94d210e08d7de93c6270c80accf" 
 BASE_URL = "https://v3.football.api-sports.io"
-ARQUIVO_CACHE = "cache_odds_v2.json"
+ARQUIVO_CACHE = "cache_odds_v3.json"
 
 # IDs das Ligas
 LIGAS_API_ID = {
@@ -40,7 +41,7 @@ LIGAS_API_ID = {
 }
 
 # ==============================================================================
-# 💾 SISTEMA DE CACHE
+# 💾 SISTEMA DE CACHE (ROBUSTO)
 # ==============================================================================
 def carregar_cache():
     if os.path.exists(ARQUIVO_CACHE):
@@ -118,12 +119,13 @@ dados_completos = carregar_dados_consolidados()
 # ==============================================================================
 
 def get_pinnacle_odd_historica(fixture_id):
-    """ Busca odd no Cache ou API """
+    """ Busca odd no Cache ou API (Bookmaker 4 = Pinnacle) """
     str_id = str(fixture_id)
     if str_id in cache_odds: return cache_odds[str_id]
     
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     try:
+        # Tenta buscar especificamente na Pinnacle (4)
         r = requests.get(f"{BASE_URL}/odds?fixture={fixture_id}&bookmaker=4", headers=headers).json()
         odd = 0
         if r['response']:
@@ -134,10 +136,14 @@ def get_pinnacle_odd_historica(fixture_id):
                         if val['value'] == 'Over 1.5':
                             odd = float(val['odd'])
                             break
+        
         if odd > 0:
             cache_odds[str_id] = odd
             salvar_cache(cache_odds)
-        return odd if odd > 0 else None
+            return odd
+        else:
+            # DEBUG: Se não achou na Pinnacle, retorna None para sabermos que a API não tem esse dado
+            return None
     except: return None
 
 def get_temporada_atual(league_id):
@@ -149,7 +155,6 @@ def get_temporada_atual(league_id):
     except: return 2024
 
 def analisar_ultimas_rodadas(league_id, nome_liga):
-    """ Busca a temporada atual e analisa as últimas 10 rodadas """
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     
     # 1. Identificar Temporada
@@ -173,16 +178,12 @@ def analisar_ultimas_rodadas(league_id, nome_liga):
     df = df[['fixture.id', 'fixture.date', 'league.round', 'teams.home.name', 'teams.away.name', 'goals.home', 'goals.away']]
     df.columns = ['fixture_id', 'data', 'rodada', 'casa', 'fora', 'gols_casa', 'gols_fora']
     
-    # 3. Ordenação e Filtro (Top 10 Rodadas)
+    # 3. Ordenação e Filtro
     df['data'] = pd.to_datetime(df['data'])
     df = df.sort_values('data', ascending=False)
     
     rodadas_presentes = df['rodada'].unique()
-    
-    if usando_temporada_anterior:
-        rodadas_selecionadas = rodadas_presentes
-    else:
-        rodadas_selecionadas = rodadas_presentes[:10]
+    rodadas_selecionadas = rodadas_presentes if usando_temporada_anterior else rodadas_presentes[:10]
     
     df_recorte = df[df['rodada'].isin(rodadas_selecionadas)].copy()
     
@@ -322,7 +323,7 @@ if modo == "1. Calculadora Manual":
     else: st.error("❌ NÃO APOSTAR")
 
 # ------------------------------------------------------------------------------
-# MODO 2: RADAR DE TENDÊNCIA (Restaurado e Melhorado)
+# MODO 2: RADAR DE TENDÊNCIA
 # ------------------------------------------------------------------------------
 elif modo == "2. Radar de Tendência (Temporada Atual)":
     st.title("📡 Radar de Tendência + Odds")
@@ -344,9 +345,12 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 odds_lista = []
                 gatilho_lista = []
                 decisao_lista = []
+                lucro_lista = []
                 
                 info_liga = dados_completos[liga_api]
                 bar_radar = st.progress(0)
+                
+                stake = 100 # Valor de referência para visualização
                 
                 for i, row in df.iterrows():
                     # 1. Odd
@@ -364,13 +368,20 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                     
                     # 3. Decisão
                     res = "Sem Odd"
+                    lucro = 0
+                    
                     if odd and odd > 0:
-                        if odd >= gatilho: res = "✅ APOSTA"
-                        else: res = "⛔ Baixo Valor"
+                        if odd >= gatilho: 
+                            res = "✅ APOSTA"
+                            if row['over_15']: lucro = (stake * odd) - stake
+                            else: lucro = -stake
+                        else: 
+                            res = "⛔ Baixo Valor"
                     
                     odds_lista.append(odd if odd else 0)
                     gatilho_lista.append(gatilho)
                     decisao_lista.append(res)
+                    lucro_lista.append(lucro)
                     
                     bar_radar.progress((list(df.index).index(i) + 1) / len(df))
                 
@@ -378,19 +389,23 @@ elif modo == "2. Radar de Tendência (Temporada Atual)":
                 df['Odd Pinnacle'] = odds_lista
                 df['Odd Gatilho'] = gatilho_lista
                 df['Veredito'] = decisao_lista
+                df['Simul. R$'] = lucro_lista
                 
                 # Exibição
-                col_v = ['data', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Veredito']
-                st.dataframe(df[col_v].style.map(
-                    lambda x: 'color: green; font-weight: bold' if x == "✅ APOSTA" else ('color: red' if x == "⛔ Baixo Valor" else 'color: gray'), subset=['Veredito']
-                ))
+                col_v = ['data', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Veredito', 'Simul. R$']
+                
+                # Renderização Segura
+                st.dataframe(df[col_v])
 
 # ------------------------------------------------------------------------------
-# MODO 3: BACKTEST PROFUNDO (5 Temporadas)
+# MODO 3: BACKTEST PROFUNDO
 # ------------------------------------------------------------------------------
 elif modo == "3. Deep Backtest (5 Temporadas)":
     st.title("📚 Backtest Profundo (+EV)")
     st.markdown("Simula apostas apenas quando há Valor Esperado positivo.")
+    
+    if API_KEY == "5b60f94d210e08d7de93c6270c80accf":
+        st.error("⚠️ Configure a API KEY no código.")
     
     col_a, col_b = st.columns(2)
     with col_a:
@@ -403,7 +418,8 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
         id_liga = LIGAS_API_ID[liga_api]
         
         # 1. Baixar Jogos
-        df, erro = executar_backtest_multitemporada(id_liga, liga_api)
+        with st.spinner("Baixando histórico massivo de jogos..."):
+            df, erro = executar_backtest_multitemporada(id_liga, liga_api)
         
         if erro:
             st.error(erro)
@@ -420,8 +436,11 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             info_liga = dados_completos[liga_api]
             bar_odds = st.progress(0)
             
+            odds_encontradas_cnt = 0
+            
             for i, row in df_final.iterrows():
                 odd_pin = get_pinnacle_odd_historica(row['fixture_id'])
+                if odd_pin: odds_encontradas_cnt += 1
                 
                 prob_ref = info_liga["super"] if row['eh_super'] else info_liga["base"]
                 
@@ -447,6 +466,7 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
                     apostou = "⚠️ N/A"
                     odd_pin = 0
                 
+                # GARANTE O TAMANHO DAS LISTAS
                 odds_fechamento.append(odd_pin)
                 odds_gatilho_lista.append(odd_gatilho)
                 resultados_financeiros.append(lucro)
@@ -456,16 +476,20 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
             
             bar_odds.empty()
             
+            # 3. Diagnóstico de API (Para saber se o problema é a Pinnacle)
+            st.caption(f"Diagnóstico de Dados: Odds recuperadas para {odds_encontradas_cnt} de {len(df_final)} jogos.")
+            if odds_encontradas_cnt == 0:
+                st.error("ERRO CRÍTICO: A API não retornou odds da Pinnacle (ID 4) para nenhum jogo. Tente outra liga europeia para testar.")
+            
             df_final['Odd Pinnacle'] = odds_fechamento
             df_final['Odd Gatilho'] = odds_gatilho_lista
             df_final['Decisão'] = decisao_lista
             df_final['Lucro'] = resultados_financeiros
             
-            # 3. Exibir Resultados (Com correção do erro KeyError)
+            # 4. Exibir Resultados
             if not df_final.empty:
                 df_apostas = df_final[df_final['Decisão'] == "✅ APOSTA"].copy()
                 
-                # Resumo
                 if not df_apostas.empty:
                     df_apostas['Saldo Acumulado'] = df_apostas['Lucro'].cumsum()
                     lucro_total = df_apostas['Lucro'].sum()
@@ -478,17 +502,11 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
                     
                     st.line_chart(df_apostas.reset_index()['Saldo Acumulado'])
                 else:
-                    st.warning("Nenhuma oportunidade +EV encontrada neste período.")
+                    st.warning("Nenhuma aposta +EV encontrada.")
 
-                # Tabela Detalhada (Correção do style)
+                # Tabela Detalhada (Sem formatação complexa para evitar erros)
                 st.subheader("📋 Relatório Jogo a Jogo")
                 colunas_view = ['data', 'temporada', 'jogo', 'total_gols', 'Odd Pinnacle', 'Odd Gatilho', 'Decisão', 'Lucro']
                 
-                # Uso do .map (compatível com Pandas novos) e verificação de colunas
-                try:
-                    st.dataframe(df_final[colunas_view].style.map(
-                        lambda x: 'color: green' if x > 0 else ('color: red' if x < 0 else 'color: black'), subset=['Lucro']
-                    ))
-                except Exception as e:
-                    # Fallback caso o style falhe
+                with st.expander("Ver Tabela de Dados Completa"):
                     st.dataframe(df_final[colunas_view])
