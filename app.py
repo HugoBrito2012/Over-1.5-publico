@@ -13,7 +13,7 @@ st.set_page_config(
 # ==============================================================================
 # 🔐 CONFIGURAÇÕES DE API
 # ==============================================================================
-API_KEY = "SUA_API_KEY_AQUI"  # <--- COLE SUA CHAVE AQUI
+API_KEY = "5b60f94d210e08d7de93c6270c80accf"  # <--- COLE SUA CHAVE AQUI
 BASE_URL = "https://v3.football.api-sports.io"
 
 # Ano da Temporada para Análise (Ajuste conforme necessário)
