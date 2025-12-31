@@ -435,4 +435,4 @@ elif modo == "3. Deep Backtest (5 Temporadas)":
                 apostou = "Ignorada"
                 
                 if odd_pin and odd_pin > 0:
-                    if odd_pin >= odd_gat
+                    if odd_pin >= odd_gatilho:
